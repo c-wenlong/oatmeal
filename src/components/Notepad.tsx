@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
+import {
+  LinkHighlight,
+  linkHighlightPluginKey,
+  sameHighlight,
+} from "../lib/linkHighlightExtension";
 import StarterKit from "@tiptap/starter-kit";
 import { BlockId } from "../lib/blockIdExtension";
 import {
@@ -22,6 +27,10 @@ interface Props {
   /** Milliseconds since the meeting started; drives the block anchors. */
   elapsedMs: () => number;
   onSaveStateChange?: (state: SaveState) => void;
+  /** Block ids to light up, because the transcript line they came from is hovered. */
+  highlightedBlocks?: Set<string>;
+  /** Fires with the block under the pointer, or null on leaving the editor. */
+  onHoverBlock?: (blockId: string | null) => void;
 }
 
 /** Reads the editor's top-level blocks in display order. */
@@ -39,11 +48,18 @@ export function readBlocks(editor: Editor): EditorBlock[] {
  * The notepad. Sparse notes typed here are the anchors the summarizer uses, so
  * every block carries the moment it was first written (SPEC section 7).
  */
-export function Notepad({ meetingId, elapsedMs, onSaveStateChange }: Props) {
+export function Notepad({
+  meetingId,
+  elapsedMs,
+  onSaveStateChange,
+  highlightedBlocks,
+  onHoverBlock,
+}: Props) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const saved = useRef<NoteBlock[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentMeeting = useRef<string | null>(meetingId);
+  const editorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     onSaveStateChange?.(saveState);
@@ -59,6 +75,7 @@ export function Notepad({ meetingId, elapsedMs, onSaveStateChange }: Props) {
         horizontalRule: false,
       }),
       BlockId,
+      LinkHighlight,
     ],
     content: "",
     editorProps: {
@@ -159,8 +176,33 @@ export function Notepad({ meetingId, elapsedMs, onSaveStateChange }: Props) {
     [meetingId],
   );
 
+  // Pushed into the editor as a decoration. The transaction carries only meta,
+  // so `docChanged` stays false and the autosave is never woken by a mouse move.
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+    const next = highlightedBlocks ?? new Set<string>();
+    const current = linkHighlightPluginKey.getState(editor.state) ?? new Set<string>();
+    if (sameHighlight(current, next)) {
+      return;
+    }
+    editor.view.dispatch(editor.state.tr.setMeta(linkHighlightPluginKey, next));
+  }, [editor, highlightedBlocks]);
+
   return (
-    <div className="notepad">
+    <div
+      className="notepad"
+      ref={editorRef}
+      onMouseLeave={() => onHoverBlock?.(null)}
+      onMouseOver={(event) => {
+        if (!onHoverBlock) {
+          return;
+        }
+        const block = (event.target as HTMLElement).closest?.("[data-block-id]");
+        onHoverBlock(block?.getAttribute("data-block-id") ?? null);
+      }}
+    >
       <div className="notepad-head">
         <span className="notepad-label">Notes</span>
         <span className={`notepad-save notepad-save--${saveState}`}>

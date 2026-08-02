@@ -269,6 +269,23 @@ pub fn delete_meeting(conn: &Connection, meeting_id: &str) -> Result<Option<Stri
         .optional()?
         .flatten();
 
+    // `embeddings` is a `vec0` virtual table, so it carries no foreign key and
+    // the cascade that clears utterances and note blocks cannot reach it. Its
+    // rows have to go first, while the ids that name them still exist —
+    // afterwards there is no way to tell which vectors belonged to this meeting.
+    conn.execute(
+        "DELETE FROM embeddings WHERE owner_type = 'utterance' AND owner_id IN (
+             SELECT CAST(id AS TEXT) FROM utterances WHERE meeting_id = ?1
+         )",
+        params![meeting_id],
+    )?;
+    conn.execute(
+        "DELETE FROM embeddings WHERE owner_type = 'note_block' AND owner_id IN (
+             SELECT ?1 || ':' || block_id FROM note_blocks WHERE meeting_id = ?1
+         )",
+        params![meeting_id],
+    )?;
+
     conn.execute("DELETE FROM meetings WHERE id = ?1", params![meeting_id])?;
     Ok(audio_path)
 }
@@ -479,6 +496,83 @@ pub fn insert_embedding(
     Ok(())
 }
 
+/// Writes an embedding, replacing any existing one for the same owner.
+///
+/// Re-embedding happens whenever a transcript or note is revised, and `vec0`
+/// has no upsert — a plain insert would silently accumulate duplicate vectors
+/// for one owner and skew every nearest-neighbour query afterwards.
+pub fn replace_embedding(
+    conn: &Connection,
+    owner_type: &str,
+    owner_id: &str,
+    vector: &[f32],
+) -> Result<()> {
+    // Encode first: on a width mismatch this leaves the existing vector alone
+    // rather than deleting it and failing to write a replacement.
+    let blob = encode(vector)?;
+    conn.execute(
+        "DELETE FROM embeddings WHERE owner_type = ?1 AND owner_id = ?2",
+        params![owner_type, owner_id],
+    )?;
+    conn.execute(
+        "INSERT INTO embeddings (owner_type, owner_id, embedding) VALUES (?1, ?2, ?3)",
+        params![owner_type, owner_id, blob],
+    )?;
+    Ok(())
+}
+
+fn decode(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
+/// Reads back stored vectors for specific owners, keyed by `owner_id`.
+///
+/// The linker needs the vectors themselves, not nearest-neighbour results — it
+/// scores every in-window candidate against one note rather than asking the
+/// index for a global top-k. Scoped to the ids asked for, because one meeting's
+/// linking pass has no use for every vector in the library.
+pub fn embeddings_for(
+    conn: &Connection,
+    owner_type: &str,
+    owner_ids: &[String],
+) -> Result<std::collections::HashMap<String, Vec<f32>>> {
+    let mut out = std::collections::HashMap::new();
+    if owner_ids.is_empty() {
+        return Ok(out);
+    }
+
+    // Chunked because SQLite caps variables per statement (999 by default) and a
+    // long meeting has more utterances than that.
+    for chunk in owner_ids.chunks(500) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT owner_id, embedding FROM embeddings
+             WHERE owner_type = ? AND owner_id IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut values: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() + 1);
+        values.push(&owner_type);
+        for id in chunk {
+            values.push(id);
+        }
+        let rows = stmt.query_map(values.as_slice(), |row| {
+            let id: String = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            Ok((id, decode(&blob)))
+        })?;
+        for row in rows {
+            let (id, vector) = row?;
+            out.insert(id, vector);
+        }
+    }
+    Ok(out)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct VectorHit {
     pub owner_type: String,
@@ -504,6 +598,93 @@ pub fn nearest_embeddings(conn: &Connection, vector: &[f32], k: i64) -> Result<V
 }
 
 // ------------------------------------------------------------------ stats
+
+/// A link as it comes back out of the database, keyed by the editor's block id
+/// rather than the rowid the table stores.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredLink {
+    pub note_block_id: String,
+    pub utterance_id: i64,
+    pub method: String,
+    pub score: f64,
+}
+
+/// Replaces every link for a meeting.
+///
+/// Linking is a pure function of the transcript and the notes, so it is
+/// recomputed wholesale rather than patched — that keeps a re-run from leaving
+/// links behind that point at text the user has since deleted.
+///
+/// `note_links.note_block_id` is the rowid, but callers work in the editor's
+/// stable string ids; the translation happens here so no caller has to know.
+/// Links naming a block this meeting does not have are skipped rather than
+/// failing the batch: an LLM citation is the one input that can name anything.
+pub fn replace_note_links(
+    conn: &mut Connection,
+    meeting_id: &str,
+    links: &[(String, i64, String, f64)],
+) -> Result<usize> {
+    let tx = conn.transaction()?;
+
+    let mut rowids = std::collections::HashMap::new();
+    {
+        let mut stmt = tx.prepare("SELECT block_id, id FROM note_blocks WHERE meeting_id = ?1")?;
+        let rows = stmt.query_map(params![meeting_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (block_id, rowid) = row?;
+            rowids.insert(block_id, rowid);
+        }
+    }
+
+    tx.execute(
+        "DELETE FROM note_links
+         WHERE note_block_id IN (SELECT id FROM note_blocks WHERE meeting_id = ?1)",
+        params![meeting_id],
+    )?;
+
+    let mut written = 0usize;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT OR IGNORE INTO note_links (note_block_id, utterance_id, method, score)
+             VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for (block_id, utterance_id, method, score) in links {
+            let Some(rowid) = rowids.get(block_id) else {
+                continue;
+            };
+            written += stmt.execute(params![rowid, utterance_id, method, score])?;
+        }
+    }
+
+    tx.commit()?;
+    Ok(written)
+}
+
+pub fn meeting_links(conn: &Connection, meeting_id: &str) -> Result<Vec<StoredLink>> {
+    let mut stmt = conn.prepare(
+        "SELECT b.block_id, l.utterance_id, l.method, l.score
+         FROM note_links l
+         JOIN note_blocks b ON b.id = l.note_block_id
+         WHERE b.meeting_id = ?1
+         ORDER BY b.seq, l.score DESC",
+    )?;
+    let rows = stmt.query_map(params![meeting_id], |row| {
+        Ok(StoredLink {
+            note_block_id: row.get(0)?,
+            utterance_id: row.get(1)?,
+            method: row.get(2)?,
+            score: row.get(3)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
 
 /// Surfaced by the `db_status` command so the Phase 0 harness can show that the
 /// data layer is real rather than merely compiled.

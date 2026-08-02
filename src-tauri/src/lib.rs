@@ -1,4 +1,6 @@
 pub mod db;
+pub mod embed;
+pub mod link;
 pub mod llm;
 pub mod meeting;
 pub mod panel;
@@ -78,6 +80,10 @@ pub struct AppState {
     /// subscribes afterwards (a later mount, a hot reload, a second window)
     /// would otherwise show "unknown" forever despite the answer being known.
     pub last_permissions: Mutex<Option<PermissionsSnapshot>>,
+    /// Live linker weights. Mutable at runtime so the tuning panel can move
+    /// alpha/beta and re-link without a rebuild — the defaults are measured
+    /// (see `link::eval`), not sacred.
+    pub link_params: Mutex<link::LinkParams>,
 }
 
 /// Mirrors `PermissionsSnapshot` in `src/lib/permissions.ts`.
@@ -168,6 +174,26 @@ fn finish_active_meeting(app: &tauri::AppHandle, event: &sidecar::SidecarEvent) 
     ) {
         eprintln!("failed to finish meeting: {err}");
     }
+    // The lock has to go before indexing starts, or the background pass blocks
+    // on a guard this thread is still holding.
+    drop(db);
+
+    // Linking is deferred rather than awaited: it can take seconds on a long
+    // meeting, and nothing the user does next depends on it having finished.
+    // A failure here is logged, never fatal — the transcript is already safe.
+    let handle = app.clone();
+    let id = meeting_id.clone();
+    tauri::async_runtime::spawn(async move {
+        match index_meeting_now(&handle, &id).await {
+            Ok(report) => {
+                if let Some(reason) = &report.degraded {
+                    eprintln!("linked {id} on timestamps alone ({reason})");
+                }
+                let _ = handle.emit("meeting://indexed", &report);
+            }
+            Err(err) => eprintln!("failed to index {id}: {err}"),
+        }
+    });
 }
 
 /// Creates a meeting row and tells the sidecar to start recording into it.
@@ -529,6 +555,86 @@ fn sidecar_send(
         .ok_or_else(|| "sidecar is not running".to_string())?
         .send(&command)
         .map_err(|e| e.to_string())
+}
+
+// -------------------------------------------------------------------- linking
+
+/// Embeds and links a meeting, storing the result.
+///
+/// Exposed as a command as well as running automatically on completion, because
+/// the tuning panel needs to re-link on demand after the weights move.
+#[tauri::command]
+async fn meeting_index(
+    app: tauri::AppHandle,
+    meeting_id: String,
+) -> Result<link::pipeline::IndexReport, String> {
+    index_meeting_now(&app, &meeting_id).await
+}
+
+/// Shared by the command and the automatic post-meeting run.
+///
+/// Runs on a blocking thread rather than a async worker. `Connection` and its
+/// `MutexGuard` are both `!Send`, so the lock cannot be held across an `.await`
+/// in an async command — but it can be held for the whole of a synchronous
+/// closure that drives the future to completion itself.
+async fn index_meeting_now(
+    app: &tauri::AppHandle,
+    meeting_id: &str,
+) -> Result<link::pipeline::IndexReport, String> {
+    let app = app.clone();
+    let meeting_id = meeting_id.to_string();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let params = *state
+            .link_params
+            .lock()
+            .map_err(|_| "link params lock poisoned")?;
+
+        let embedder = embed::HttpEmbedder::local();
+        let mut db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        tauri::async_runtime::block_on(link::pipeline::index_meeting(
+            db.connection_mut(),
+            &meeting_id,
+            &embedder,
+            &params,
+        ))
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("indexing thread failed: {e}"))?
+}
+
+#[tauri::command]
+fn meeting_links(
+    meeting_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<repo::StoredLink>, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::meeting_links(db.connection(), &meeting_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn link_params_get(state: tauri::State<'_, AppState>) -> Result<link::LinkParams, String> {
+    Ok(*state
+        .link_params
+        .lock()
+        .map_err(|_| "link params lock poisoned")?)
+}
+
+/// Replaces the linker weights. Does not re-link — the caller decides which
+/// meeting to recompute, so moving a slider does not silently rewrite the
+/// entire library.
+#[tauri::command]
+fn link_params_set(
+    params: link::LinkParams,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    *state
+        .link_params
+        .lock()
+        .map_err(|_| "link params lock poisoned")? = params;
+    Ok(())
 }
 
 // ------------------------------------------------------------------ providers
@@ -922,6 +1028,7 @@ pub fn run() {
                 llm: LlmClient::new(),
                 runtime: llm::bundled::Runtime::new(&dir),
                 last_permissions: Mutex::new(None),
+                link_params: Mutex::new(link::LinkParams::default()),
             });
 
             if std::env::var(AUTOSTART_ENV).as_deref() == Ok("1") {
@@ -968,7 +1075,11 @@ pub fn run() {
             runtime_state,
             runtime_models,
             runtime_start,
-            runtime_stop
+            runtime_stop,
+            meeting_index,
+            meeting_links,
+            link_params_get,
+            link_params_set
         ])
         .run(app_context())
         .expect("error while running tauri application");

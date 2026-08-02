@@ -16,6 +16,9 @@ import type {
   Template,
   SupervisorEvent,
   Utterance,
+  StoredLink,
+  LinkParams,
+  IndexReport,
 } from "../types";
 import type { PermissionsSnapshot } from "./permissions";
 
@@ -184,4 +187,31 @@ export function runtimeStart(): Promise<number> {
 
 export function runtimeStop(): Promise<void> {
   return invoke<void>("runtime_stop");
+}
+
+// ------------------------------------------------------------------- linking
+
+/** Embeds and re-links a meeting. Slow on a long transcript — it embeds. */
+export function meetingIndex(meetingId: string): Promise<IndexReport> {
+  return invoke<IndexReport>("meeting_index", { meetingId });
+}
+
+export function meetingLinks(meetingId: string): Promise<StoredLink[]> {
+  return invoke<StoredLink[]>("meeting_links", { meetingId });
+}
+
+export function linkParamsGet(): Promise<LinkParams> {
+  return invoke<LinkParams>("link_params_get");
+}
+
+/** Stores new weights. Does not re-link; call `meetingIndex` for that. */
+export function linkParamsSet(params: LinkParams): Promise<void> {
+  return invoke<void>("link_params_set", { params });
+}
+
+/** Fires when a background indexing pass finishes and links have changed. */
+export function onMeetingIndexed(
+  handler: (report: IndexReport) => void,
+): Promise<UnlistenFn> {
+  return listen<IndexReport>("meeting://indexed", (event) => handler(event.payload));
 }

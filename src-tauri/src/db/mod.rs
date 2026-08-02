@@ -11,9 +11,11 @@ use rusqlite::Connection;
 
 pub mod repo;
 
-/// Dimension of stored embedding vectors. Must match `0002_embeddings.sql`;
-/// changing it requires a new migration that rebuilds the table.
-pub const EMBEDDING_DIM: usize = 384;
+/// Dimension of stored embedding vectors. Must match the most recent embeddings
+/// migration; changing it requires a new one that rebuilds the table.
+///
+/// 768 is what nomic-embed-text v1.5 produces (see `0004_embedding_dim_768.sql`).
+pub const EMBEDDING_DIM: usize = 768;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -55,6 +57,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 3,
         name: "note_block_identity",
         sql: include_str!("migrations/0003_note_block_identity.sql"),
+    },
+    Migration {
+        version: 4,
+        name: "embedding_dim_768",
+        sql: include_str!("migrations/0004_embedding_dim_768.sql"),
     },
 ];
 

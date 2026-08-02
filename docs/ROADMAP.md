@@ -10,8 +10,8 @@
 | 1 · Capture pipeline | G5–G8 | ✅ **Complete** |
 | 2 · The meeting document | G9–G11 | ✅ **Complete** |
 | 3 · Generation | G12–G15 | ✅ **Complete** |
-| 4 · The differentiator | G16–G18 | Next |
-| 5–7 | G19–G29 | Not started |
+| 4 · The differentiator | G16–G18 | ✅ **Complete** (G17 partly — see notes) |
+| 5–7 | G19–G29 | Next |
 
 Phase 0 notes:
 - **G2 answered the risk question: the architecture holds.** Dual-stream capture and
@@ -186,16 +186,72 @@ Open questions from SPEC §13, mapped to the goal they block. Answer each just b
 **Depends on:** G3
 **Build:** Local embedding model (bge-small or EmbeddingGemma via CoreML in the sidecar, or `fastembed-rs` in the core — benchmark both, pick on latency). Embed utterances and note blocks on meeting completion, in the background. Store via `sqlite-vec`. Backfill job for pre-existing meetings.
 **Done when:** a one-hour meeting embeds in under ~30s in the background without blocking the UI, and nearest-neighbour lookup returns semantically sensible utterances.
+**Status:** ✅ Done. Built as `HttpEmbedder` against any OpenAI-shaped `/embeddings`
+endpoint rather than a bundled model — `nomic-embed-text:v1.5` through the local
+runtime G13 already manages. Measured against the real model: **721 texts (an hour
+of transcript at one line per five seconds) in 7.7s**, well inside the 30s budget
+(`an_hour_of_transcript_embeds_within_the_budget`, ignored by default because CI
+has no model). Indexing runs on a blocking thread after the meeting ends and
+re-uses vectors it already has, so re-opening a meeting costs nothing.
+Migration 0004 widened the vector index 384 → 768 to match the model.
 
 ### G17 · Layered linker ⚠️ highest-risk feature
 **Depends on:** G14, G16
 **Build:** All three layers per SPEC §7. Temporal candidates in `[T-45s, T+10s]`, asymmetric because you type *after* hearing. Semantic rerank, combined `α·temporal + β·semantic`. Global semantic pass to catch late notes, added as a second link when it beats the windowed best by a margin. LLM citations from G14 merged in. Every link stored with its `method` and `score`.
 **Done when:** across 10 real meetings, hand-review says the top link for each note block is correct materially more often than the timestamp-only baseline. **Build the baseline first and measure against it** — otherwise there's no way to know if the semantic layer is helping or hurting.
+**Status:** ⚠️ Built and measured, but **the done-when as written is not met and cannot
+be met by the agent** — it requires ten of *your* real meetings and *your* judgement of
+what each note refers to. What exists instead:
+
+- The baseline was built first (`link_baseline`), and the measurement harness
+  (`link::eval`) scores any labelled corpus through either linker.
+- On a 14-case fixture corpus: **baseline 9/14 (64%), layered 14/14 (100%)**.
+- α/β are **measured, not guessed**. The first sweep recommended α=0.0 — throw the
+  clock away entirely — which turned out to be an artifact of a biased corpus: every
+  case made the correct answer the topically-matching line, which bag-of-words
+  matching nails. Four cases were added where the note is shorthand sharing no
+  vocabulary with the transcript ("!!", "ask J re: timeline"), which is how people
+  actually write. The optimum then moved to a **plateau at α=0.2–0.4**, and the
+  shipped default is α=0.3 — the centre of the plateau, not the edge of a spike.
+  `weighting_curve` (ignored) prints the whole curve.
+- **The fixture is a harness, not evidence.** It uses a bag-of-words stand-in
+  embedder and cases the author wrote. Feeding real meetings through `evaluate()` is
+  a matter of loading rows instead of literals — that is the work still outstanding,
+  and it is yours to do.
 
 ### G18 · Linking UI and tuning
 **Depends on:** G17
 **Build:** Hovering a note block highlights its linked transcript spans; hovering a transcript span highlights the notes drawn from it. Note-derived summary bullets visually distinguished from transcript-only ones. A debug panel exposing α/β and showing per-link method and score.
 **Done when:** the bidirectional highlight is correct and legible on a one-hour meeting, and α/β can be tuned live against a real meeting without a rebuild.
+**Status:** ✅ Done, with one piece deferred. The bidirectional highlight and the
+tuning panel (α/β, windows, min score, max links, plus per-link method and score)
+both work; Apply re-links the open meeting live, no rebuild.
+
+Two things worth recording:
+- The note-side highlight is a **ProseMirror decoration**, not a DOM class. The first
+  attempt set `classList` directly and passed its test — then ProseMirror's next
+  reconciliation wiped it. Decorations are presentation-only and never mark the
+  notepad dirty, so hovering cannot trip the autosave.
+- Writing the hover test surfaced a **pre-existing bug from G15**: the mount path
+  that restores the last meeting built its transcript lines without `utteranceId`,
+  so on a cold start citation chips had nothing to scroll to. Fixed.
+
+**Deferred:** "note-derived summary bullets visually distinguished from
+transcript-only ones" — the panel already marks uncited bullets, but bullets are not
+yet distinguished by *note* versus *transcript* provenance.
+
+**Not verifiable by the agent:** the hover itself. macOS withholds Accessibility
+permission here, so synthetic pointer events are dropped and the highlight cannot be
+driven in the running app. It is covered by DOM tests instead, and the panel was
+photographed live against a seeded meeting (12 links from the real embedder,
+"9 by clock · 3 by meaning" — matching the database exactly).
+
+**Two bugs fixed in passing:** deleting a meeting left its vectors behind
+(`embeddings` is a `vec0` virtual table, so nothing cascades into it), and the
+in-window links were all labelled `temporal` even when meaning decided them, which
+made the stored `method` useless for judging whether the semantic layer helps.
+Links are now labelled `semantic` when meaning *promoted* them past what the clock
+would have picked.
 
 ---
 

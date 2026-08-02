@@ -1,4 +1,11 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RecordCard } from "./RecordCard";
@@ -17,6 +24,11 @@ import {
   notesSave,
   onSidecarEvent,
   sidecarSend,
+  meetingLinks,
+  onMeetingIndexed,
+  linkParamsGet,
+  linkParamsSet,
+  meetingIndex,
 } from "../lib/tauri";
 import type {
   AudioSource,
@@ -43,6 +55,12 @@ vi.mock("../lib/tauri", () => ({
   panelsList: vi.fn(),
   panelGenerate: vi.fn(),
   panelDelete: vi.fn(),
+  // Linking (G18): the card loads links and subscribes to background indexing.
+  meetingLinks: vi.fn(),
+  onMeetingIndexed: vi.fn(),
+  meetingIndex: vi.fn(),
+  linkParamsGet: vi.fn(),
+  linkParamsSet: vi.fn(),
 }));
 
 const mockOn = vi.mocked(onSidecarEvent);
@@ -59,6 +77,9 @@ const mockNotesLoad = vi.mocked(notesLoad);
 const mockNotesSave = vi.mocked(notesSave);
 const mockPanels = vi.mocked(panelsList);
 const mockTemplateList = vi.mocked(templatesList);
+const mockLinks = vi.mocked(meetingLinks);
+const mockOnIndexed = vi.mocked(onMeetingIndexed);
+const mockLinkParams = vi.mocked(linkParamsGet);
 
 let subscriber: (event: SupervisorEvent) => void;
 let meetingStateSubscriber: (state: MeetingStateT) => void;
@@ -92,6 +113,11 @@ beforeEach(() => {
     mockNotesSave,
     mockPanels,
     mockTemplateList,
+    mockLinks,
+    mockOnIndexed,
+    mockLinkParams,
+    vi.mocked(meetingIndex),
+    vi.mocked(linkParamsSet),
   ]) {
     m.mockReset();
   }
@@ -115,6 +141,19 @@ beforeEach(() => {
   mockNotesSave.mockResolvedValue(undefined);
   mockPanels.mockResolvedValue([]);
   mockTemplateList.mockResolvedValue([]);
+  mockLinks.mockResolvedValue([]);
+  vi.mocked(linkParamsSet).mockResolvedValue(undefined);
+  vi.mocked(meetingIndex).mockResolvedValue({ embedded: 0, links: 0, degraded: null });
+  mockOnIndexed.mockImplementation(async () => () => {});
+  mockLinkParams.mockResolvedValue({
+    lookBackMs: 45_000,
+    lookAheadMs: 10_000,
+    alpha: 0.3,
+    beta: 0.7,
+    globalMargin: 0.15,
+    minScore: 0.15,
+    maxPerNote: 3,
+  });
 });
 
 describe("RecordCard", () => {
@@ -522,5 +561,182 @@ describe("RecordCard", () => {
     });
 
     expect(await screen.findByText(/first run downloads it/i)).toBeInTheDocument();
+  });
+});
+
+describe("RecordCard linking (G18)", () => {
+  /** A stored meeting with one note block linked to one of two lines. */
+  function seedLinkedMeeting() {
+    mockList.mockResolvedValue([
+      {
+        id: "m1",
+        title: "Standup",
+        startedAt: 1_700_000_000_000,
+        endedAt: 1_700_000_060_000,
+        utteranceCount: 2,
+        status: "complete",
+        audioPath: null,
+      },
+    ]);
+    mockTranscript.mockResolvedValue([
+      {
+        id: 1,
+        seq: 0,
+        source: "system" as AudioSource,
+        text: "the deadline for the migration is thursday",
+        startMs: 18_000,
+        endMs: 21_000,
+        confidence: null,
+      },
+      {
+        id: 2,
+        seq: 1,
+        source: "system" as AudioSource,
+        text: "who is bringing lunch",
+        startMs: 40_000,
+        endMs: 43_000,
+        confidence: null,
+      },
+    ]);
+    mockNotesLoad.mockResolvedValue([
+      {
+        blockId: "b1",
+        seq: 0,
+        text: "deadline migration",
+        firstTypedAtMs: 21_000,
+        lastEditedAtMs: 21_000,
+      },
+    ]);
+    mockLinks.mockResolvedValue([
+      { noteBlockId: "b1", utteranceId: 1, method: "semantic", score: 0.82 },
+    ]);
+  }
+
+  it("lights the linked note when a transcript line is hovered", async () => {
+    seedLinkedMeeting();
+    render(<RecordCard />);
+
+    const line = await screen.findByText(/deadline for the migration/i);
+    const row = line.closest("[data-utterance-id]") as HTMLElement;
+
+    // Nothing lit until the pointer is actually on a line.
+    expect(document.querySelector(".note-block--linked")).toBeNull();
+
+    fireEvent.mouseEnter(row);
+
+    await waitFor(() =>
+      expect(document.querySelector(".note-block--linked")).not.toBeNull(),
+    );
+    expect(
+      document.querySelector(".note-block--linked")?.getAttribute("data-block-id"),
+    ).toBe("b1");
+  });
+
+  it("stops lighting the note once the pointer leaves", async () => {
+    seedLinkedMeeting();
+    render(<RecordCard />);
+
+    const line = await screen.findByText(/deadline for the migration/i);
+    const row = line.closest("[data-utterance-id]") as HTMLElement;
+
+    fireEvent.mouseEnter(row);
+    await waitFor(() =>
+      expect(document.querySelector(".note-block--linked")).not.toBeNull(),
+    );
+
+    fireEvent.mouseLeave(row);
+    await waitFor(() =>
+      expect(document.querySelector(".note-block--linked")).toBeNull(),
+    );
+  });
+
+  it("does not light a note from a line nothing links to", async () => {
+    // The unlinked line still highlights itself, so the pointer target and the
+    // highlight agree — but it must not drag an unrelated note along with it.
+    seedLinkedMeeting();
+    render(<RecordCard />);
+
+    const line = await screen.findByText(/bringing lunch/i);
+    const row = line.closest("[data-utterance-id]") as HTMLElement;
+
+    fireEvent.mouseEnter(row);
+
+    await waitFor(() => expect(row.className).toContain("transcript-line--linked"));
+    expect(document.querySelector(".note-block--linked")).toBeNull();
+  });
+
+  it("shows how many links there are and by which method", async () => {
+    seedLinkedMeeting();
+    render(<RecordCard />);
+
+    // Collapsed by default — the tuner is a debug surface, not the main event.
+    const toggle = await screen.findByRole("button", { name: /tune linking/i });
+    expect(toggle).toHaveTextContent("1 links");
+
+    fireEvent.click(toggle);
+
+    const breakdown = await screen.findByTestId("link-breakdown");
+    expect(breakdown).toHaveTextContent("1 by meaning");
+    expect(breakdown).toHaveTextContent("0 by clock");
+  });
+
+  it("does not blame a missing embedder when meaning simply agreed", async () => {
+    // `method` records which layer decided a link, so zero-by-meaning means the
+    // clock picked the same lines anyway. Claiming the model is missing there
+    // would send the user chasing a problem they do not have.
+    seedLinkedMeeting();
+    mockLinks.mockResolvedValue([
+      { noteBlockId: "b1", utteranceId: 1, method: "temporal", score: 0.4 },
+    ]);
+    render(<RecordCard />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /tune linking/i }));
+
+    expect(await screen.findByText(/meaning changed no rankings/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no embedding model reachable/i)).toBeNull();
+  });
+
+  it("says so plainly when the embedder really was unreachable", async () => {
+    seedLinkedMeeting();
+    vi.mocked(meetingIndex).mockResolvedValue({
+      embedded: 0,
+      links: 1,
+      degraded: "could not reach the embedding model at http://localhost:11434/v1",
+    });
+    render(<RecordCard />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /tune linking/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /apply and re-link/i }));
+
+    expect(
+      await screen.findByText(/no embedding model reachable/i),
+    ).toBeInTheDocument();
+  });
+
+  it("re-links the meeting when the weights are applied", async () => {
+    seedLinkedMeeting();
+    vi.mocked(meetingIndex).mockResolvedValue({
+      embedded: 3,
+      links: 2,
+      degraded: null,
+    });
+    render(<RecordCard />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /tune linking/i }));
+
+    const slider = await screen.findByLabelText(/weight of time against meaning/i);
+    fireEvent.change(slider, { target: { value: "0.5" } });
+    fireEvent.click(screen.getByRole("button", { name: /apply and re-link/i }));
+
+    await waitFor(() => expect(vi.mocked(linkParamsSet)).toHaveBeenCalled());
+    // Alpha and beta are one budget: moving one must move the other, or every
+    // score silently rescales and two sessions stop being comparable.
+    expect(vi.mocked(linkParamsSet).mock.calls[0][0]).toMatchObject({
+      alpha: 0.5,
+      beta: 0.5,
+    });
+    expect(vi.mocked(meetingIndex)).toHaveBeenCalledWith("m1");
+    // And the links are reloaded, so the list reflects what just happened.
+    await waitFor(() => expect(mockLinks.mock.calls.length).toBeGreaterThan(1));
   });
 });

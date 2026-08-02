@@ -193,3 +193,33 @@ export type RuntimeState =
   | { state: "needs_model" }
   | { state: "ready" }
   | { state: "running"; pid: number };
+
+/** Mirrors `LinkMethod` in src-tauri/src/link/mod.rs. */
+export type LinkMethod = "temporal" | "semantic" | "llm";
+
+/** Mirrors `StoredLink` in src-tauri/src/db/repo.rs. */
+export interface StoredLink {
+  noteBlockId: string;
+  utteranceId: number;
+  method: LinkMethod;
+  score: number;
+}
+
+/** Mirrors `LinkParams` in src-tauri/src/link/mod.rs. */
+export interface LinkParams {
+  lookBackMs: number;
+  lookAheadMs: number;
+  alpha: number;
+  beta: number;
+  globalMargin: number;
+  minScore: number;
+  maxPerNote: number;
+}
+
+/** Mirrors `IndexReport` in src-tauri/src/link/pipeline.rs. */
+export interface IndexReport {
+  embedded: number;
+  links: number;
+  /** Set when no embedder was reachable and linking fell back to timestamps. */
+  degraded: string | null;
+}

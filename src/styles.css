@@ -695,6 +695,100 @@ select {
   border-radius: 4px;
 }
 
+/* The steady glow while a linked note is hovered. Deliberately quieter than
+   the citation flash above and marked with a rule down the side, so the two
+   can be told apart when they land on the same line at once. */
+.transcript-line--linked {
+  background: var(--accent-soft);
+  border-radius: 4px;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* The other half of the same relationship, on the notes side. */
+.note-block--linked {
+  background: var(--accent-soft);
+  border-radius: 4px;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* ------------------------------------------------------------------ tuner */
+
+.tuner {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.tuner--closed {
+  margin-top: 10px;
+}
+
+.tuner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.tuner-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.tuner-row {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tuner-row input[type="range"] {
+  width: 100%;
+  padding: 0;
+}
+
+.tuner-links {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.tuner-links li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tuner-link-text {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Link methods reuse the transcript tag shape so scores read as labels. */
+.log-tag--temporal {
+  color: var(--muted);
+}
+
+.log-tag--semantic {
+  color: var(--accent);
+}
+
+.log-tag--llm {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 input {
   font: inherit;
   font-size: 13px;

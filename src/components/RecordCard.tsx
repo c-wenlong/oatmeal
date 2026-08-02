@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   meetingDelete,
@@ -11,16 +11,27 @@ import {
   meetingsList,
   onSidecarEvent,
   sidecarSend,
+  meetingLinks,
+  onMeetingIndexed,
 } from "../lib/tauri";
+import {
+  buildLinkIndex,
+  detailKey,
+  explainLink,
+  highlightedNotes,
+  highlightedUtterances,
+} from "../lib/links";
 import type {
   AudioSource,
   MeetingState as MeetingStateT,
   MeetingSummary,
+  StoredLink,
   SupervisorEvent,
   Utterance,
 } from "../types";
 import { Notepad } from "./Notepad";
 import { PanelView } from "./PanelView";
+import { LinkTuner } from "./LinkTuner";
 
 interface Line {
   key: string;
@@ -31,6 +42,40 @@ interface Line {
   startMs: number;
   /** In-flight text, superseded by a later final. */
   partial: boolean;
+}
+
+/**
+ * A transcript line's class.
+ *
+ * Two separate highlights land on the same element: the flash from clicking a
+ * citation, and the steady glow from hovering a linked note. They are different
+ * states — one is a one-shot "look here", the other says "this is where that
+ * note came from" — so they get different classes rather than one being made to
+ * stand in for the other.
+ */
+export function transcriptLineClass(
+  utteranceId: number | undefined,
+  flashed: number | null,
+  lit: Set<number>,
+): string {
+  const classes = ["log-line"];
+  if (utteranceId !== undefined && utteranceId === flashed) {
+    classes.push("transcript-line--highlight");
+  }
+  if (utteranceId !== undefined && lit.has(utteranceId)) {
+    classes.push("transcript-line--linked");
+  }
+  return classes.join(" ");
+}
+
+/** Tooltip explaining why a line is lit, or undefined when it is not linked. */
+export function describeLink(
+  index: ReturnType<typeof buildLinkIndex>,
+  noteBlockId: string,
+  utteranceId: number,
+): string | undefined {
+  const link = index.detail.get(detailKey(noteBlockId, utteranceId));
+  return link ? `Linked by ${explainLink(link)}` : undefined;
 }
 
 /** `mic` is the user, `system` is everyone else — SPEC section 4. */
@@ -95,6 +140,12 @@ export function RecordCard() {
   const recordingStartedAt = useRef<number | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(true);
   const [highlighted, setHighlighted] = useState<number | null>(null);
+  const [links, setLinks] = useState<StoredLink[]>([]);
+  const [utterances, setUtterances] = useState<Utterance[]>([]);
+  // Which side the pointer is on. Only one is ever set — the highlight is
+  // driven from whichever pane the mouse is actually in.
+  const [hoveredNote, setHoveredNote] = useState<string | null>(null);
+  const [hoveredUtterance, setHoveredUtterance] = useState<number | null>(null);
 
   /**
    * Scrolls the transcript to a cited line and flashes it.
@@ -159,6 +210,11 @@ export function RecordCard() {
           setLines(
             utterances.map((u) => ({
               key: `stored-${u.id}`,
+              // Without this the restored-on-launch transcript has lines with
+              // no identity: citation chips find nothing to scroll to and the
+              // link highlight has nothing to match. The open-a-meeting path
+              // below always set it, so the bug only ever showed on a cold start.
+              utteranceId: u.id,
               source: u.source,
               text: u.text,
               startMs: u.startMs,
@@ -323,6 +379,37 @@ export function RecordCard() {
       );
     });
 
+  const shown = viewing ?? active;
+
+  const reloadLinks = useCallback(() => {
+    if (!shown) {
+      setLinks([]);
+      setUtterances([]);
+      return;
+    }
+    void meetingLinks(shown)
+      .then(setLinks)
+      .catch(() => setLinks([]));
+    void meetingTranscript(shown)
+      .then(setUtterances)
+      .catch(() => setUtterances([]));
+  }, [shown]);
+
+  useEffect(reloadLinks, [reloadLinks]);
+
+  // Indexing runs in the background after a meeting ends, so the links do not
+  // exist yet when the meeting first appears. This is the nudge to pick them up.
+  useEffect(() => {
+    const handle = onMeetingIndexed(reloadLinks);
+    return () => {
+      void handle.then((off) => off?.());
+    };
+  }, [reloadLinks]);
+
+  const linkIndex = useMemo(() => buildLinkIndex(links), [links]);
+  const litUtterances = highlightedUtterances(linkIndex, hoveredNote, hoveredUtterance);
+  const litNotes = highlightedNotes(linkIndex, hoveredNote, hoveredUtterance);
+
   return (
     <section className="card">
       <div className="card-head">
@@ -378,7 +465,17 @@ export function RecordCard() {
       <PanelView meetingId={viewing ?? active} onCitationClick={revealUtterance} />
 
       <div className="meeting-body">
-        <Notepad meetingId={viewing ?? active} elapsedMs={elapsedMs} />
+        <Notepad
+          meetingId={shown}
+          elapsedMs={elapsedMs}
+          highlightedBlocks={litNotes}
+          onHoverBlock={(blockId) => {
+            setHoveredNote(blockId);
+            if (blockId !== null) {
+              setHoveredUtterance(null);
+            }
+          }}
+        />
 
         <div
           className={transcriptOpen ? "transcript" : "transcript transcript--closed"}
@@ -397,13 +494,25 @@ export function RecordCard() {
             <div className="log" ref={transcriptRef} data-testid="transcript">
               {lines.map((line) => (
                 <div
-                  className={
-                    line.utteranceId !== undefined && line.utteranceId === highlighted
-                      ? "log-line transcript-line--highlight"
-                      : "log-line"
-                  }
+                  className={transcriptLineClass(
+                    line.utteranceId,
+                    highlighted,
+                    litUtterances,
+                  )}
                   key={line.key}
                   data-utterance-id={line.utteranceId}
+                  title={
+                    line.utteranceId !== undefined && hoveredNote
+                      ? describeLink(linkIndex, hoveredNote, line.utteranceId)
+                      : undefined
+                  }
+                  onMouseEnter={() => {
+                    if (line.utteranceId !== undefined) {
+                      setHoveredUtterance(line.utteranceId);
+                      setHoveredNote(null);
+                    }
+                  }}
+                  onMouseLeave={() => setHoveredUtterance(null)}
                 >
                   <span className="log-time">{timecode(line.startMs)}</span>
                   <span className={`log-tag log-tag--${line.source}`}>
@@ -418,6 +527,13 @@ export function RecordCard() {
           )}
         </div>
       </div>
+
+      <LinkTuner
+        meetingId={shown}
+        links={links}
+        utterances={utterances}
+        onRelinked={reloadLinks}
+      />
 
       <div className="meetings">
         <div className="meetings-head">
