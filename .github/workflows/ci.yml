@@ -51,13 +51,24 @@ jobs:
       - name: Test with coverage
         run: pnpm test:coverage
 
+      # Always keep the report, so coverage is retrievable from the run itself
+      # even when Codecov is not configured.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-frontend
+          path: ./coverage/frontend/lcov.info
+          if-no-files-found: error
+
+      # Skipped rather than silently 401ing when the token is absent — this repo
+      # is private, so Codecov cannot accept tokenless uploads.
       - uses: codecov/codecov-action@v5
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
         with:
           files: ./coverage/frontend/lcov.info
           flags: frontend
           name: frontend
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+          fail_ci_if_error: true
 
   swift:
     name: Swift sidecar
@@ -80,13 +91,24 @@ jobs:
       - name: Test with coverage
         run: bash scripts/swift-coverage.sh
 
+      # Always keep the report, so coverage is retrievable from the run itself
+      # even when Codecov is not configured.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-swift
+          path: ./coverage/swift-lcov.info
+          if-no-files-found: error
+
+      # Skipped rather than silently 401ing when the token is absent — this repo
+      # is private, so Codecov cannot accept tokenless uploads.
       - uses: codecov/codecov-action@v5
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
         with:
           files: ./coverage/swift-lcov.info
           flags: swift
           name: swift
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+          fail_ci_if_error: true
 
   rust:
     name: Rust core
@@ -152,10 +174,21 @@ jobs:
           --output-path ../coverage/rust-lcov.info
           --ignore-filename-regex '(tests/|target/)'
 
+      # Always keep the report, so coverage is retrievable from the run itself
+      # even when Codecov is not configured.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-rust
+          path: ./coverage/rust-lcov.info
+          if-no-files-found: error
+
+      # Skipped rather than silently 401ing when the token is absent — this repo
+      # is private, so Codecov cannot accept tokenless uploads.
       - uses: codecov/codecov-action@v5
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
         with:
           files: ./coverage/rust-lcov.info
           flags: rust
           name: rust
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+          fail_ci_if_error: true

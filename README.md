@@ -97,10 +97,17 @@ pnpm sidecar:coverage  # -> coverage/swift-lcov.info
 cd src-tauri && cargo llvm-cov --lcov --output-path ../coverage/rust-lcov.info
 ```
 
-[CI](.github/workflows/ci.yml) runs all three on every push and PR, uploading each
-under its own Codecov flag so a drop is attributable to the layer that caused it.
-The frontend job runs on Linux; only the jobs that genuinely need Apple toolchains
-pay for a macOS runner.
+[CI](.github/workflows/ci.yml) runs all three suites on every push and PR. The
+frontend job runs on Linux; only the jobs that genuinely need Apple toolchains pay
+for a macOS runner. Each report is uploaded as a build artifact (`coverage-rust`,
+`coverage-swift`, `coverage-frontend`) and, when configured, sent to Codecov under
+its own flag so a drop is attributable to the layer that caused it.
+
+> **Codecov needs one manual step.** This repository is private, so Codecov cannot
+> accept tokenless uploads. Add the repo at [codecov.io](https://codecov.io), then
+> save its upload token as a `CODECOV_TOKEN` repository secret. Until then the
+> upload step is skipped (not failed) and the coverage badge reads *unknown* —
+> the artifacts still carry the full reports.
 
 The Rust integration tests in `src-tauri/tests/` drive the **real** Swift binary —
 handshake, session, external kill and restart, and crash-loop abandonment. They
