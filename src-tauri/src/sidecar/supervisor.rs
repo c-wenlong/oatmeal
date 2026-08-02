@@ -170,7 +170,7 @@ impl Supervisor {
                     .args(&shared.args)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::null())
+                    .stderr(Stdio::piped())
                     .spawn()
                 {
                     Ok(child) => child,
@@ -191,6 +191,17 @@ impl Supervisor {
                 });
 
                 let stdout = child.stdout.take().expect("stdout was piped");
+
+                // The sidecar's diagnostics are the only window into what audio
+                // capture and the ASR model are doing. Discarding them, as this
+                // used to, makes every failure in there invisible.
+                if let Some(stderr) = child.stderr.take() {
+                    std::thread::spawn(move || {
+                        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                            eprintln!("{line}");
+                        }
+                    });
+                }
                 *shared.stdin.lock().unwrap() = child.stdin.take();
 
                 // Reading happens on this thread; the child handle goes into the

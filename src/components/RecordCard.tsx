@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
-  meetingActive,
+  meetingDelete,
+  meetingRename,
+  meetingState,
+  onMeetingState,
   meetingStart,
   meetingStop,
   meetingTranscript,
@@ -9,7 +12,14 @@ import {
   onSidecarEvent,
   sidecarSend,
 } from "../lib/tauri";
-import type { AudioSource, MeetingSummary, SupervisorEvent, Utterance } from "../types";
+import type {
+  AudioSource,
+  MeetingState as MeetingStateT,
+  MeetingSummary,
+  SupervisorEvent,
+  Utterance,
+} from "../types";
+import { Notepad } from "./Notepad";
 
 interface Line {
   key: string;
@@ -25,6 +35,26 @@ function speaker(source: AudioSource): string {
   return source === "mic" ? "You" : "Them";
 }
 
+/** Meeting start, in the reader's locale. */
+function formatDate(epochMs: number): string {
+  return new Date(epochMs).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Wall-clock length, or a dash while a meeting is still open. */
+function formatDuration(startedAt: number, endedAt: number | null): string {
+  if (endedAt === null) return "—";
+  const seconds = Math.max(0, Math.round((endedAt - startedAt) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 function timecode(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(total / 60);
@@ -37,7 +67,13 @@ function timecode(ms: number): string {
  * attributed, and find it still there after a restart.
  */
 export function RecordCard() {
-  const [active, setActive] = useState<string | null>(null);
+  const [lifecycle, setLifecycle] = useState<MeetingStateT>({ state: "idle" });
+  const active =
+    lifecycle.state === "recording" || lifecycle.state === "processing"
+      ? lifecycle.meeting_id
+      : null;
+  const isRecording = lifecycle.state === "recording";
+  const isProcessing = lifecycle.state === "processing";
   const [lines, setLines] = useState<Line[]>([]);
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
   const [viewing, setViewing] = useState<string | null>(null);
@@ -50,6 +86,16 @@ export function RecordCard() {
 
   const unlisten = useRef<UnlistenFn | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  // Wall-clock instant the recording began, so note anchors and transcript
+  // timestamps share a zero. Without that the linker would compare note times
+  // against transcript times measured from a different origin.
+  const recordingStartedAt = useRef<number | null>(null);
+  const [transcriptOpen, setTranscriptOpen] = useState(true);
+
+  const elapsedMs = useCallback(
+    () => (recordingStartedAt.current === null ? 0 : Date.now() - recordingStartedAt.current),
+    [],
+  );
 
   const refreshMeetings = useCallback(async () => {
     try {
@@ -67,9 +113,13 @@ export function RecordCard() {
     let cancelled = false;
     (async () => {
       try {
-        const current = await meetingActive();
+        const current = await meetingState();
         if (cancelled) return;
-        setActive(current);
+        setLifecycle(current);
+        const currentId =
+          current.state === "recording" || current.state === "processing"
+            ? current.meeting_id
+            : null;
 
         const stored = await meetingsList();
         if (cancelled) return;
@@ -79,7 +129,7 @@ export function RecordCard() {
         // or interrupted one is the least useful thing to reopen into, and it
         // hides the fact that anything was ever saved.
         const latest = stored.find((m) => m.utteranceCount > 0);
-        if (!current && latest) {
+        if (!currentId && latest) {
           const utterances = await meetingTranscript(latest.id);
           if (cancelled) return;
           setViewing(latest.id);
@@ -143,12 +193,27 @@ export function RecordCard() {
         return;
       }
       if (inner.ev === "stopped") {
-        setActive(null);
+        // Rust emits the lifecycle change itself; just reload the list.
         refreshMeetings();
       }
     },
     [refreshMeetings],
   );
+
+  // Rust is the source of truth for the lifecycle; mirror it rather than
+  // tracking it independently.
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe: UnlistenFn | null = null;
+    onMeetingState((next) => setLifecycle(next)).then((fn) => {
+      if (cancelled) fn();
+      else unsubscribe = fn;
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -184,10 +249,37 @@ export function RecordCard() {
     guard(async () => {
       setLines([]);
       setViewing(null);
-      setActive(await meetingStart());
+      recordingStartedAt.current = Date.now();
+      await meetingStart();
     });
 
-  const stop = () => guard(() => meetingStop());
+  const stop = () =>
+    guard(async () => {
+      await meetingStop();
+    });
+
+  const rename = (meetingId: string, currentTitle: string) =>
+    guard(async () => {
+      const title = window.prompt("Rename meeting", currentTitle);
+      if (title === null || title.trim() === "") return;
+      await meetingRename(meetingId, title.trim());
+      await refreshMeetings();
+    });
+
+  const remove = (meetingId: string, title: string) =>
+    guard(async () => {
+      // Deleting a meeting destroys its transcript, notes and audio, and there
+      // is no undo — so this asks first.
+      if (!window.confirm(`Delete "${title}"? Its transcript, notes and audio go too.`)) {
+        return;
+      }
+      await meetingDelete(meetingId);
+      if (viewing === meetingId) {
+        setViewing(null);
+        setLines([]);
+      }
+      await refreshMeetings();
+    });
 
   /** Loads a stored transcript — the proof that it survived a restart. */
   const open = (meetingId: string) =>
@@ -209,9 +301,9 @@ export function RecordCard() {
     <section className="card">
       <div className="card-head">
         <h2>Record</h2>
-        {active ? (
-          <span className="pill pill--err">recording</span>
-        ) : (
+        {isRecording && <span className="pill pill--err">recording</span>}
+        {isProcessing && <span className="pill pill--pending">finalising</span>}
+        {!isRecording && !isProcessing && (
           <span className="pill pill--pending">idle</span>
         )}
       </div>
@@ -228,7 +320,7 @@ export function RecordCard() {
         <button className="primary" onClick={start} disabled={active !== null}>
           Start recording
         </button>
-        <button onClick={stop} disabled={active === null}>
+        <button onClick={stop} disabled={!isRecording}>
           Stop
         </button>
         <span className="meter" title="input levels">
@@ -257,18 +349,36 @@ export function RecordCard() {
       )}
       {message && <p className="empty-note">{message}</p>}
 
-      <div className="log" ref={transcriptRef} data-testid="transcript">
-        {lines.map((line) => (
-          <div className="log-line" key={line.key}>
-            <span className="log-time">{timecode(line.startMs)}</span>
-            <span className={`log-tag log-tag--${line.source}`}>
-              {speaker(line.source)}
-            </span>
-            <span className={line.partial ? "log-text log-partial" : "log-text"}>
-              {line.text}
-            </span>
+      <div className="meeting-body">
+        <Notepad meetingId={viewing ?? active} elapsedMs={elapsedMs} />
+
+        <div className={transcriptOpen ? "transcript" : "transcript transcript--closed"}>
+          <div className="transcript-head">
+            <span className="notepad-label">Transcript</span>
+            <button
+              className="link-button"
+              onClick={() => setTranscriptOpen((open) => !open)}
+              aria-expanded={transcriptOpen}
+            >
+              {transcriptOpen ? "Hide" : "Show"}
+            </button>
           </div>
-        ))}
+          {transcriptOpen && (
+            <div className="log" ref={transcriptRef} data-testid="transcript">
+              {lines.map((line) => (
+                <div className="log-line" key={line.key}>
+                  <span className="log-time">{timecode(line.startMs)}</span>
+                  <span className={`log-tag log-tag--${line.source}`}>
+                    {speaker(line.source)}
+                  </span>
+                  <span className={line.partial ? "log-text log-partial" : "log-text"}>
+                    {line.text}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="meetings">
@@ -277,20 +387,34 @@ export function RecordCard() {
           <button onClick={refreshMeetings}>Refresh</button>
         </div>
         {meetings.length === 0 && <p className="empty-note">Nothing recorded yet.</p>}
-        {meetings.map((meeting) => (
-          <button
-            key={meeting.id}
-            className={viewing === meeting.id ? "meeting meeting--open" : "meeting"}
-            onClick={() => open(meeting.id)}
-          >
-            <span className="meeting-title">{meeting.title ?? meeting.id}</span>
-            <span className="meeting-meta">
-              {meeting.utteranceCount} utterance
-              {meeting.utteranceCount === 1 ? "" : "s"} &middot; {meeting.status}
-              {meeting.audioPath ? " · audio saved" : ""}
-            </span>
-          </button>
-        ))}
+        {meetings.map((meeting) => {
+          const title = meeting.title ?? meeting.id;
+          return (
+            <div
+              key={meeting.id}
+              className={viewing === meeting.id ? "meeting meeting--open" : "meeting"}
+            >
+              <button className="meeting-open" onClick={() => open(meeting.id)}>
+                <span className="meeting-title">{title}</span>
+                <span className="meeting-meta">
+                  {formatDate(meeting.startedAt)} &middot;{" "}
+                  {formatDuration(meeting.startedAt, meeting.endedAt)} &middot;{" "}
+                  {meeting.utteranceCount} utterance
+                  {meeting.utteranceCount === 1 ? "" : "s"} &middot; {meeting.status}
+                  {meeting.audioPath ? " · audio saved" : ""}
+                </span>
+              </button>
+              <span className="meeting-actions">
+                <button className="link-button" onClick={() => rename(meeting.id, title)}>
+                  Rename
+                </button>
+                <button className="link-button" onClick={() => remove(meeting.id, title)}>
+                  Delete
+                </button>
+              </span>
+            </div>
+          );
+        })}
       </div>
     </section>
   );

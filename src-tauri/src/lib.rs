@@ -1,4 +1,5 @@
 pub mod db;
+pub mod meeting;
 pub mod sidecar;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,6 +9,7 @@ use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use db::{repo, Database};
+use meeting::{MeetingEvent, MeetingState};
 use sidecar::{Supervisor, SupervisorEvent};
 
 /// Reported to the frontend by [`health_check`]. Mirrored by `HealthInfo` in
@@ -54,9 +56,10 @@ pub struct AppState {
     /// callback needing this mutex — it fires on the supervisor thread and would
     /// otherwise deadlock against the caller that is still holding the lock.
     pub sidecar: Mutex<Option<Arc<Supervisor>>>,
-    /// Meeting currently being recorded, if any. Set by `meeting_start` and
-    /// cleared when the sidecar confirms it stopped.
-    pub active_meeting: Mutex<Option<String>>,
+    /// Where the meeting lifecycle currently is. Every transition goes through
+    /// `meeting::next`, so illegal ones are refused rather than silently
+    /// producing a half-state.
+    pub meeting: Mutex<MeetingState>,
     /// Last permission snapshot the sidecar reported.
     ///
     /// Cached because permissions arrive as a one-shot event: anything that
@@ -99,15 +102,15 @@ fn persist_final(app: &tauri::AppHandle, event: &sidecar::SidecarEvent) {
     };
 
     let state = app.state::<AppState>();
-    let Ok(active) = state.active_meeting.lock() else {
+    let Ok(machine) = state.meeting.lock() else {
         return;
     };
-    let Some(meeting_id) = active.clone() else {
-        // Audio can still be flowing after `stop`; without an active meeting
-        // there is nowhere to put it, and inventing one would create ghosts.
+    // `Processing` still counts: audio that settled just before the stop
+    // belongs to that meeting rather than nowhere.
+    let Some(meeting_id) = machine.active_meeting().map(str::to_string) else {
         return;
     };
-    drop(active);
+    drop(machine);
 
     let Ok(db) = state.db.lock() else { return };
     if let Err(err) = repo::append_utterance(
@@ -130,13 +133,15 @@ fn finish_active_meeting(app: &tauri::AppHandle, event: &sidecar::SidecarEvent) 
     };
 
     let state = app.state::<AppState>();
-    let Ok(mut active) = state.active_meeting.lock() else {
+    let Ok(machine) = state.meeting.lock() else {
         return;
     };
-    let Some(meeting_id) = active.take() else {
+    let Some(meeting_id) = machine.active_meeting().map(str::to_string) else {
         return;
     };
-    drop(active);
+    drop(machine);
+    // The sidecar confirming a stop is what actually ends a meeting.
+    let _ = transition(app, MeetingEvent::SidecarStopped);
 
     let Ok(db) = state.db.lock() else { return };
     // Default retention is 7 days (SPEC section 11); the sweeper in G27 deletes
@@ -158,13 +163,6 @@ fn finish_active_meeting(app: &tauri::AppHandle, event: &sidecar::SidecarEvent) 
 fn meeting_start(app: tauri::AppHandle, title: Option<String>) -> Result<String, String> {
     let state = app.state::<AppState>();
 
-    {
-        let active = state.active_meeting.lock().map_err(|_| "lock poisoned")?;
-        if active.is_some() {
-            return Err("a meeting is already recording".into());
-        }
-    }
-
     let started = now_ms();
     let id = format!("m{started}");
     let title = title.unwrap_or_else(|| "Untitled meeting".to_string());
@@ -176,7 +174,12 @@ fn meeting_start(app: tauri::AppHandle, title: Option<String>) -> Result<String,
 
     // The row exists before the sidecar is told to record, so an utterance that
     // arrives immediately has somewhere to go.
-    *state.active_meeting.lock().map_err(|_| "lock poisoned")? = Some(id.clone());
+    transition(
+        &app,
+        MeetingEvent::Started {
+            meeting_id: id.clone(),
+        },
+    )?;
 
     let guard = state.sidecar.lock().map_err(|_| "sidecar lock poisoned")?;
     let supervisor = guard
@@ -194,6 +197,12 @@ fn meeting_start(app: tauri::AppHandle, title: Option<String>) -> Result<String,
 
 #[tauri::command]
 fn meeting_stop(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    {
+        let mut machine = state.meeting.lock().map_err(|_| "lock poisoned")?;
+        *machine =
+            meeting::next(&machine, MeetingEvent::StopRequested).map_err(|e| e.to_string())?;
+    }
+
     let guard = state.sidecar.lock().map_err(|_| "sidecar lock poisoned")?;
     guard
         .as_ref()
@@ -205,10 +214,81 @@ fn meeting_stop(state: tauri::State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 fn meeting_active(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
     Ok(state
-        .active_meeting
+        .meeting
         .lock()
         .map_err(|_| "lock poisoned")?
-        .clone())
+        .active_meeting()
+        .map(str::to_string))
+}
+
+/// Full lifecycle state, so the UI can distinguish "finalising" from "idle".
+#[tauri::command]
+fn meeting_state(state: tauri::State<'_, AppState>) -> Result<MeetingState, String> {
+    Ok(state.meeting.lock().map_err(|_| "lock poisoned")?.clone())
+}
+
+#[tauri::command]
+fn meeting_rename(
+    meeting_id: String,
+    title: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return Err("a meeting needs a title".into());
+    }
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::rename_meeting(db.connection(), &meeting_id, trimmed).map_err(|e| e.to_string())
+}
+
+/// Deletes a meeting, its transcript, its notes and its audio file.
+#[tauri::command]
+fn meeting_delete(meeting_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    {
+        // Refusing here rather than deleting out from under the capture engine,
+        // which would leave the sidecar writing to a meeting that no longer exists.
+        let machine = state.meeting.lock().map_err(|_| "lock poisoned")?;
+        if machine.active_meeting() == Some(meeting_id.as_str()) {
+            return Err("stop the recording before deleting it".into());
+        }
+    }
+
+    let audio_path = {
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        repo::delete_meeting(db.connection(), &meeting_id).map_err(|e| e.to_string())?
+    };
+
+    // Best effort: the rows are already gone, and a leftover file is better
+    // than an error that makes the delete look like it failed.
+    if let Some(path) = audio_path {
+        if let Err(err) = std::fs::remove_file(&path) {
+            eprintln!("could not remove {path}: {err}");
+        }
+    }
+    Ok(())
+}
+
+/// Saves the whole notepad for a meeting.
+///
+/// The editor owns block identity and timing; Rust only enforces that a
+/// block's `firstTypedAtMs` is never rewritten once set.
+#[tauri::command]
+fn notes_save(
+    meeting_id: String,
+    blocks: Vec<repo::NoteBlock>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::save_note_blocks(db.connection_mut(), &meeting_id, &blocks).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn notes_load(
+    meeting_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<repo::NoteBlock>, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::meeting_notes(db.connection(), &meeting_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -239,6 +319,26 @@ fn permissions_snapshot(
 
 /// Tauri event channel carrying every [`SupervisorEvent`] to the frontend.
 pub const SIDECAR_EVENT: &str = "sidecar://event";
+
+/// Tauri event carrying every [`MeetingState`] change to the frontend.
+pub const MEETING_STATE_EVENT: &str = "meeting://state";
+
+/// Applies a lifecycle transition and tells the frontend.
+///
+/// Rust owns this state. A meeting can be started by something other than the
+/// record button — the dev harness today, calendar detection later — and a
+/// frontend that only reads the state on mount shows "idle" while a recording
+/// is plainly running.
+fn transition(app: &tauri::AppHandle, event: MeetingEvent) -> Result<MeetingState, String> {
+    let state = app.state::<AppState>();
+    let mut machine = state.meeting.lock().map_err(|_| "lock poisoned")?;
+    let next_state = meeting::next(&machine, event).map_err(|e| e.to_string())?;
+    *machine = next_state.clone();
+    drop(machine);
+
+    let _ = app.emit(MEETING_STATE_EVENT, &next_state);
+    Ok(next_state)
+}
 
 /// Set to `1` to spawn the sidecar and run one scripted session at launch.
 ///
@@ -326,6 +426,7 @@ fn spawn_sidecar(app: &tauri::AppHandle, autorun_session: bool) -> Result<String
             let _ = for_callback.send(&sidecar::SidecarCommand::Permissions { request: false });
             // Arm so the pre-roll is filling by the time the model is ready.
             let _ = for_callback.send(&sidecar::SidecarCommand::Arm);
+            let _ = transition(&app_handle, MeetingEvent::Armed);
         }
 
         // Harness: once the model is ready, run one timed recording end to end.
@@ -476,7 +577,7 @@ fn db_selftest(state: tauri::State<'_, AppState>) -> Result<DbSelftest, String> 
         Some(0.93),
     )
     .map_err(|e| e.to_string())?;
-    repo::insert_note_block(conn, "selftest", 0, "deadline = 14th", Some(16_000))
+    repo::insert_note_block(conn, "selftest", "b0", 0, "deadline = 14th", Some(16_000))
         .map_err(|e| e.to_string())?;
 
     // "migrate" must match "migration" — proves the porter tokenizer is active.
@@ -548,7 +649,7 @@ pub fn run() {
                 db: Mutex::new(db),
                 db_path: path.to_string_lossy().into_owned(),
                 sidecar: Mutex::new(None),
-                active_meeting: Mutex::new(None),
+                meeting: Mutex::new(MeetingState::default()),
                 last_permissions: Mutex::new(None),
             });
 
@@ -578,7 +679,12 @@ pub fn run() {
             meeting_stop,
             meeting_active,
             meetings_list,
-            meeting_transcript
+            meeting_transcript,
+            notes_save,
+            notes_load,
+            meeting_state,
+            meeting_rename,
+            meeting_delete
         ])
         .run(app_context())
         .expect("error while running tauri application");

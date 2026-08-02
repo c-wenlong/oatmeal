@@ -9,7 +9,7 @@ function App() {
     <main className="app">
       <header className="masthead">
         <h1>Oatmeal</h1>
-        <span className="phase-tag">Phase 1</span>
+        <span className="phase-tag">Phase 2</span>
       </header>
       <p className="tagline">
         Build harness. Each card proves one piece of the pipeline works end to end

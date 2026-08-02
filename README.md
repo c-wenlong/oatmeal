@@ -53,7 +53,7 @@ rather than merely compiling:
 
 | Card | Proves |
 |---|---|
-| **Record** | Captures both streams, transcribes on device, persists attributed lines to SQLite, and reopens them after a restart |
+| **Record** | Captures both streams, transcribes on device, persists attributed lines to SQLite, and reopens them after a restart. Notes sit beside the transcript; each block records when it was first typed, which is what the summariser will use as an anchor. |
 | **Permissions** | Microphone and Screen Recording state, with deep links and the stale-grant relaunch case |
 | **Rust core** | Tauri IPC round-trips between the webview and Rust |
 | **Sidecar** | The Swift sidecar spawns, handshakes, streams events, and is restarted when it dies |
@@ -84,9 +84,9 @@ Neither does anything unless set.
 ## Tests
 
 ```bash
-pnpm verify            # typecheck + lint + frontend tests (68)
+pnpm verify            # typecheck + lint + frontend tests (104)
 pnpm sidecar:test      # Swift protocol + audio-core tests (84)
-cd src-tauri && cargo test    # Rust unit + integration (62)
+cd src-tauri && cargo test    # Rust unit + integration (94)
 ```
 
 Coverage, as CI reports it:

@@ -3,9 +3,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   DbSelftest,
   HealthInfo,
+  MeetingState,
   MeetingSummary,
   PrivacyPane,
   SidecarCommand,
+  NoteBlock,
   SupervisorEvent,
   Utterance,
 } from "../types";
@@ -84,4 +86,39 @@ export function meetingsList(): Promise<MeetingSummary[]> {
 
 export function meetingTranscript(meetingId: string): Promise<Utterance[]> {
   return invoke<Utterance[]>("meeting_transcript", { meetingId });
+}
+
+export function notesSave(meetingId: string, blocks: NoteBlock[]): Promise<void> {
+  return invoke<void>("notes_save", { meetingId, blocks });
+}
+
+export function notesLoad(meetingId: string): Promise<NoteBlock[]> {
+  return invoke<NoteBlock[]>("notes_load", { meetingId });
+}
+
+export function meetingState(): Promise<MeetingState> {
+  return invoke<MeetingState>("meeting_state");
+}
+
+export function meetingRename(meetingId: string, title: string): Promise<void> {
+  return invoke<void>("meeting_rename", { meetingId, title });
+}
+
+export function meetingDelete(meetingId: string): Promise<void> {
+  return invoke<void>("meeting_delete", { meetingId });
+}
+
+/** Must match `MEETING_STATE_EVENT` in src-tauri/src/lib.rs. */
+export const MEETING_STATE_EVENT = "meeting://state";
+
+/**
+ * Subscribes to lifecycle changes. Rust owns the state — a meeting can be
+ * started by something other than the record button (calendar detection, the
+ * dev harness), and polling on mount alone would show "idle" during a live
+ * recording.
+ */
+export function onMeetingState(
+  handler: (state: MeetingState) => void,
+): Promise<UnlistenFn> {
+  return listen<MeetingState>(MEETING_STATE_EVENT, (e) => handler(e.payload));
 }

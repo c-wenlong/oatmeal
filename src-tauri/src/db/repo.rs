@@ -3,7 +3,7 @@
 //! Deliberately free functions taking `&Connection` rather than methods on
 //! `Database`, so they compose inside a transaction the caller owns.
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use super::{DbError, Result, EMBEDDING_DIM};
@@ -39,20 +39,113 @@ pub fn insert_utterance(
     Ok(conn.last_insert_rowid())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn insert_note_block(
     conn: &Connection,
     meeting_id: &str,
+    block_id: &str,
     seq: i64,
     text: &str,
     first_typed_at_ms: Option<i64>,
 ) -> Result<i64> {
     conn.execute(
         "INSERT INTO note_blocks
-             (meeting_id, seq, text, first_typed_at_ms, last_edited_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?4)",
-        params![meeting_id, seq, text, first_typed_at_ms],
+             (meeting_id, block_id, seq, text, first_typed_at_ms, last_edited_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+        params![meeting_id, block_id, seq, text, first_typed_at_ms],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// One block of the notepad, as the editor knows it.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteBlock {
+    /// Editor-assigned, stable for the life of the block.
+    pub block_id: String,
+    pub seq: i64,
+    pub text: String,
+    /// Milliseconds from meeting start to the first keystroke in this block.
+    pub first_typed_at_ms: Option<i64>,
+    pub last_edited_at_ms: Option<i64>,
+}
+
+/// Replaces a meeting's notes with `blocks`, preserving each block's identity.
+///
+/// The rule this exists to enforce: **`first_typed_at_ms` is written once and
+/// never rewritten.** It is the anchor the temporal linker keys on (SPEC
+/// section 7), so letting an edit move it would silently re-point a note at a
+/// different moment in the transcript. Text, order and last-edited all update
+/// freely; the anchor does not.
+///
+/// Runs in one transaction so an autosave interrupted half-way cannot leave the
+/// notepad partially rewritten.
+pub fn save_note_blocks(
+    conn: &mut Connection,
+    meeting_id: &str,
+    blocks: &[NoteBlock],
+) -> Result<()> {
+    let tx = conn.transaction()?;
+
+    {
+        // Anything the editor no longer has was deleted by the user.
+        let keep: Vec<String> = blocks.iter().map(|b| b.block_id.clone()).collect();
+        let mut stmt = tx.prepare("SELECT block_id FROM note_blocks WHERE meeting_id = ?1")?;
+        let existing: Vec<String> = stmt
+            .query_map(params![meeting_id], |row| row.get(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        drop(stmt);
+
+        for gone in existing.iter().filter(|id| !keep.contains(id)) {
+            tx.execute(
+                "DELETE FROM note_blocks WHERE meeting_id = ?1 AND block_id = ?2",
+                params![meeting_id, gone],
+            )?;
+        }
+
+        for block in blocks {
+            // `excluded.first_typed_at_ms` is deliberately absent from the SET
+            // clause — see the doc comment.
+            tx.execute(
+                "INSERT INTO note_blocks
+                     (meeting_id, block_id, seq, text,
+                      first_typed_at_ms, last_edited_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (meeting_id, block_id) DO UPDATE SET
+                     seq = excluded.seq,
+                     text = excluded.text,
+                     last_edited_at_ms = excluded.last_edited_at_ms",
+                params![
+                    meeting_id,
+                    block.block_id,
+                    block.seq,
+                    block.text,
+                    block.first_typed_at_ms,
+                    block.last_edited_at_ms
+                ],
+            )?;
+        }
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn meeting_notes(conn: &Connection, meeting_id: &str) -> Result<Vec<NoteBlock>> {
+    let mut stmt = conn.prepare(
+        "SELECT block_id, seq, text, first_typed_at_ms, last_edited_at_ms
+         FROM note_blocks WHERE meeting_id = ?1 ORDER BY seq",
+    )?;
+    let rows = stmt.query_map(params![meeting_id], |row| {
+        Ok(NoteBlock {
+            block_id: row.get(0)?,
+            seq: row.get(1)?,
+            text: row.get(2)?,
+            first_typed_at_ms: row.get(3)?,
+            last_edited_at_ms: row.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
 /// Next sequence number for a meeting's transcript.
@@ -151,6 +244,33 @@ pub fn list_meetings(conn: &Connection, limit: i64) -> Result<Vec<MeetingSummary
         })
     })?;
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+pub fn rename_meeting(conn: &Connection, meeting_id: &str, title: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE meetings SET title = ?2 WHERE id = ?1",
+        params![meeting_id, title],
+    )?;
+    Ok(())
+}
+
+/// Deletes a meeting and everything hanging off it.
+///
+/// Returns the audio path, if any, so the caller can remove the file — the
+/// cascade clears the rows but knows nothing about the filesystem, and an
+/// orphaned recording is exactly the data a user asked to be rid of.
+pub fn delete_meeting(conn: &Connection, meeting_id: &str) -> Result<Option<String>> {
+    let audio_path: Option<String> = conn
+        .query_row(
+            "SELECT audio_path FROM meetings WHERE id = ?1",
+            params![meeting_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+
+    conn.execute("DELETE FROM meetings WHERE id = ?1", params![meeting_id])?;
+    Ok(audio_path)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -351,7 +471,7 @@ mod tests {
             Some(0.88),
         )
         .unwrap();
-        insert_note_block(conn, "m1", 0, "deadline = 14th", Some(16_000)).unwrap();
+        insert_note_block(conn, "m1", "b0", 0, "deadline = 14th", Some(16_000)).unwrap();
 
         db
     }
@@ -420,6 +540,271 @@ mod tests {
         assert_eq!(meeting.status, "complete");
         assert_eq!(meeting.ended_at, Some(5_000));
         assert_eq!(meeting.audio_path.as_deref(), Some("/tmp/a.m4a"));
+    }
+
+    fn block(block_id: &str, seq: i64, text: &str, first: i64) -> NoteBlock {
+        NoteBlock {
+            block_id: block_id.into(),
+            seq,
+            text: text.into(),
+            first_typed_at_ms: Some(first),
+            last_edited_at_ms: Some(first),
+        }
+    }
+
+    fn seeded_meeting() -> Database {
+        let db = Database::open_in_memory().unwrap();
+        insert_meeting(db.connection(), "m1", "Test", 0).unwrap();
+        db
+    }
+
+    #[test]
+    fn notes_round_trip_in_display_order() {
+        let mut db = seeded_meeting();
+        save_note_blocks(
+            db.connection_mut(),
+            "m1",
+            &[
+                block("b1", 0, "first", 1_000),
+                block("b2", 1, "second", 2_000),
+            ],
+        )
+        .unwrap();
+
+        let notes = meeting_notes(db.connection(), "m1").unwrap();
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[0].text, "first");
+        assert_eq!(notes[1].text, "second");
+    }
+
+    #[test]
+    fn editing_a_block_never_moves_its_first_typed_anchor() {
+        // The single most important rule in the notepad. `first_typed_at_ms` is
+        // what the temporal linker keys on, so if an edit moved it the note
+        // would silently re-point at a different moment in the transcript.
+        let mut db = seeded_meeting();
+        save_note_blocks(
+            db.connection_mut(),
+            "m1",
+            &[block("b1", 0, "deadline", 5_000)],
+        )
+        .unwrap();
+
+        let mut edited = block("b1", 0, "deadline is the 14th", 999_999);
+        edited.last_edited_at_ms = Some(60_000);
+        save_note_blocks(db.connection_mut(), "m1", &[edited]).unwrap();
+
+        let notes = meeting_notes(db.connection(), "m1").unwrap();
+        assert_eq!(notes[0].text, "deadline is the 14th");
+        assert_eq!(
+            notes[0].first_typed_at_ms,
+            Some(5_000),
+            "the linker anchor was rewritten by an edit"
+        );
+        assert_eq!(notes[0].last_edited_at_ms, Some(60_000));
+    }
+
+    #[test]
+    fn inserting_a_block_does_not_steal_its_neighbours_anchors() {
+        // The bug that made `block_id` necessary: keyed by `seq` alone, adding a
+        // line in the middle shifts everything below and each block inherits the
+        // previous occupant's timestamp.
+        let mut db = seeded_meeting();
+        save_note_blocks(
+            db.connection_mut(),
+            "m1",
+            &[
+                block("b1", 0, "first", 1_000),
+                block("b2", 1, "second", 2_000),
+            ],
+        )
+        .unwrap();
+
+        save_note_blocks(
+            db.connection_mut(),
+            "m1",
+            &[
+                block("b1", 0, "first", 1_000),
+                block("b3", 1, "inserted", 9_000),
+                block("b2", 2, "second", 2_000),
+            ],
+        )
+        .unwrap();
+
+        let notes = meeting_notes(db.connection(), "m1").unwrap();
+        let by_id: std::collections::HashMap<_, _> =
+            notes.iter().map(|n| (n.block_id.as_str(), n)).collect();
+        assert_eq!(by_id["b1"].first_typed_at_ms, Some(1_000));
+        assert_eq!(by_id["b2"].first_typed_at_ms, Some(2_000));
+        assert_eq!(by_id["b3"].first_typed_at_ms, Some(9_000));
+        // ...and the new order is reflected.
+        assert_eq!(by_id["b2"].seq, 2);
+    }
+
+    #[test]
+    fn reordering_blocks_keeps_every_anchor() {
+        let mut db = seeded_meeting();
+        save_note_blocks(
+            db.connection_mut(),
+            "m1",
+            &[
+                block("b1", 0, "first", 1_000),
+                block("b2", 1, "second", 2_000),
+            ],
+        )
+        .unwrap();
+
+        // Swapped.
+        save_note_blocks(
+            db.connection_mut(),
+            "m1",
+            &[
+                block("b2", 0, "second", 2_000),
+                block("b1", 1, "first", 1_000),
+            ],
+        )
+        .unwrap();
+
+        let notes = meeting_notes(db.connection(), "m1").unwrap();
+        assert_eq!(notes[0].block_id, "b2");
+        assert_eq!(notes[0].first_typed_at_ms, Some(2_000));
+        assert_eq!(notes[1].first_typed_at_ms, Some(1_000));
+    }
+
+    #[test]
+    fn deleting_a_block_removes_it() {
+        let mut db = seeded_meeting();
+        save_note_blocks(
+            db.connection_mut(),
+            "m1",
+            &[
+                block("b1", 0, "keep", 1_000),
+                block("b2", 1, "delete me", 2_000),
+            ],
+        )
+        .unwrap();
+
+        save_note_blocks(db.connection_mut(), "m1", &[block("b1", 0, "keep", 1_000)]).unwrap();
+
+        let notes = meeting_notes(db.connection(), "m1").unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].block_id, "b1");
+    }
+
+    #[test]
+    fn clearing_the_notepad_removes_every_block() {
+        let mut db = seeded_meeting();
+        save_note_blocks(db.connection_mut(), "m1", &[block("b1", 0, "text", 1_000)]).unwrap();
+        save_note_blocks(db.connection_mut(), "m1", &[]).unwrap();
+        assert!(meeting_notes(db.connection(), "m1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn notes_are_scoped_to_their_meeting() {
+        let mut db = seeded_meeting();
+        insert_meeting(db.connection(), "m2", "Other", 0).unwrap();
+        save_note_blocks(db.connection_mut(), "m1", &[block("b1", 0, "mine", 1_000)]).unwrap();
+        save_note_blocks(
+            db.connection_mut(),
+            "m2",
+            &[block("b1", 0, "theirs", 1_000)],
+        )
+        .unwrap();
+
+        // Same block_id in both meetings must not collide or overwrite.
+        assert_eq!(
+            meeting_notes(db.connection(), "m1").unwrap()[0].text,
+            "mine"
+        );
+        assert_eq!(
+            meeting_notes(db.connection(), "m2").unwrap()[0].text,
+            "theirs"
+        );
+    }
+
+    #[test]
+    fn saving_notes_keeps_them_searchable() {
+        let mut db = seeded_meeting();
+        save_note_blocks(
+            db.connection_mut(),
+            "m1",
+            &[block("b1", 0, "deadline for the migration", 1_000)],
+        )
+        .unwrap();
+
+        // The FTS table was rebuilt in migration 3; its triggers must still fire.
+        let hits = search_note_blocks(db.connection(), "migrate", 10).unwrap();
+        assert_eq!(hits.len(), 1, "note FTS index is not being maintained");
+
+        save_note_blocks(db.connection_mut(), "m1", &[]).unwrap();
+        assert!(search_note_blocks(db.connection(), "migrate", 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn renaming_a_meeting_keeps_everything_else() {
+        let db = seeded_meeting();
+        append_utterance(db.connection(), "m1", "mic", "hello", 0, 1, None).unwrap();
+
+        rename_meeting(db.connection(), "m1", "Quarterly planning").unwrap();
+
+        let meeting = &list_meetings(db.connection(), 10).unwrap()[0];
+        assert_eq!(meeting.title.as_deref(), Some("Quarterly planning"));
+        assert_eq!(meeting.utterance_count, 1);
+    }
+
+    #[test]
+    fn deleting_a_meeting_takes_its_transcript_and_notes_with_it() {
+        let mut db = seeded_meeting();
+        append_utterance(db.connection(), "m1", "mic", "hello", 0, 1, None).unwrap();
+        save_note_blocks(db.connection_mut(), "m1", &[block("b1", 0, "note", 1_000)]).unwrap();
+
+        delete_meeting(db.connection(), "m1").unwrap();
+
+        assert!(list_meetings(db.connection(), 10).unwrap().is_empty());
+        assert!(meeting_utterances(db.connection(), "m1")
+            .unwrap()
+            .is_empty());
+        assert!(meeting_notes(db.connection(), "m1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn deleting_returns_the_audio_path_so_the_file_can_go_too() {
+        // The cascade clears rows but knows nothing about the filesystem; an
+        // orphaned recording is exactly what the user asked to be rid of.
+        let db = seeded_meeting();
+        finish_meeting(db.connection(), "m1", 2_000, Some("/tmp/a.m4a"), None).unwrap();
+
+        let path = delete_meeting(db.connection(), "m1").unwrap();
+        assert_eq!(path.as_deref(), Some("/tmp/a.m4a"));
+    }
+
+    #[test]
+    fn deleting_a_meeting_with_no_audio_reports_no_path() {
+        let db = seeded_meeting();
+        assert_eq!(delete_meeting(db.connection(), "m1").unwrap(), None);
+    }
+
+    #[test]
+    fn deleting_a_meeting_that_does_not_exist_is_not_an_error() {
+        // Two windows, or a double click, must not produce a hard failure.
+        let db = seeded_meeting();
+        assert_eq!(delete_meeting(db.connection(), "nope").unwrap(), None);
+    }
+
+    #[test]
+    fn deleting_one_meeting_leaves_the_others_alone() {
+        let db = seeded_meeting();
+        insert_meeting(db.connection(), "m2", "Keep me", 0).unwrap();
+        append_utterance(db.connection(), "m2", "mic", "survives", 0, 1, None).unwrap();
+
+        delete_meeting(db.connection(), "m1").unwrap();
+
+        let remaining = list_meetings(db.connection(), 10).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "m2");
+        assert_eq!(remaining[0].utterance_count, 1);
     }
 
     #[test]

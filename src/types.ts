@@ -107,3 +107,22 @@ export interface Utterance {
   endMs: number;
   confidence: number | null;
 }
+
+/** Mirrors `NoteBlock` in src-tauri/src/db/repo.rs. */
+export interface NoteBlock {
+  /** Editor-assigned and stable for the life of the block. */
+  blockId: string;
+  seq: number;
+  text: string;
+  /** Milliseconds from meeting start to the first keystroke. Never rewritten. */
+  firstTypedAtMs: number | null;
+  lastEditedAtMs: number | null;
+}
+
+/** Mirrors `MeetingState` in src-tauri/src/meeting.rs. */
+export type MeetingState =
+  | { state: "idle" }
+  | { state: "armed" }
+  | { state: "recording"; meeting_id: string }
+  /** Stop requested; the sidecar has not finalised the file yet. */
+  | { state: "processing"; meeting_id: string };

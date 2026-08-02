@@ -51,6 +51,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "embeddings",
         sql: include_str!("migrations/0002_embeddings.sql"),
     },
+    Migration {
+        version: 3,
+        name: "note_block_identity",
+        sql: include_str!("migrations/0003_note_block_identity.sql"),
+    },
 ];
 
 /// Latest schema version this build knows about.

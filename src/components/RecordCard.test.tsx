@@ -3,35 +3,56 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RecordCard } from "./RecordCard";
 import {
-  meetingActive,
+  meetingDelete,
+  meetingRename,
+  meetingState,
+  onMeetingState,
   meetingStart,
   meetingStop,
   meetingTranscript,
   meetingsList,
+  notesLoad,
+  notesSave,
   onSidecarEvent,
   sidecarSend,
 } from "../lib/tauri";
-import type { AudioSource, SupervisorEvent } from "../types";
+import type {
+  AudioSource,
+  MeetingState as MeetingStateT,
+  SupervisorEvent,
+} from "../types";
 
 vi.mock("../lib/tauri", () => ({
   onSidecarEvent: vi.fn(),
   sidecarSend: vi.fn(),
   meetingStart: vi.fn(),
   meetingStop: vi.fn(),
-  meetingActive: vi.fn(),
+  meetingState: vi.fn(),
+  onMeetingState: vi.fn(),
+  meetingRename: vi.fn(),
+  meetingDelete: vi.fn(),
   meetingsList: vi.fn(),
   meetingTranscript: vi.fn(),
+  // The Notepad child reaches for these through the same module boundary.
+  notesLoad: vi.fn(),
+  notesSave: vi.fn(),
 }));
 
 const mockOn = vi.mocked(onSidecarEvent);
 const mockSend = vi.mocked(sidecarSend);
 const mockStart = vi.mocked(meetingStart);
 const mockStop = vi.mocked(meetingStop);
-const mockActive = vi.mocked(meetingActive);
+const mockState = vi.mocked(meetingState);
+const mockOnState = vi.mocked(onMeetingState);
+const mockRename = vi.mocked(meetingRename);
+const mockDelete = vi.mocked(meetingDelete);
 const mockList = vi.mocked(meetingsList);
 const mockTranscript = vi.mocked(meetingTranscript);
+const mockNotesLoad = vi.mocked(notesLoad);
+const mockNotesSave = vi.mocked(notesSave);
 
 let subscriber: (event: SupervisorEvent) => void;
+let meetingStateSubscriber: (state: MeetingStateT) => void;
 
 function emit(event: SupervisorEvent) {
   act(() => subscriber(event));
@@ -52,9 +73,14 @@ beforeEach(() => {
     mockSend,
     mockStart,
     mockStop,
-    mockActive,
+    mockState,
+    mockOnState,
+    mockRename,
+    mockDelete,
     mockList,
     mockTranscript,
+    mockNotesLoad,
+    mockNotesSave,
   ]) {
     m.mockReset();
   }
@@ -65,9 +91,17 @@ beforeEach(() => {
   mockSend.mockResolvedValue(undefined);
   mockStart.mockResolvedValue("m123");
   mockStop.mockResolvedValue(undefined);
-  mockActive.mockResolvedValue(null);
+  mockState.mockResolvedValue({ state: "idle" });
+  mockOnState.mockImplementation(async (handler) => {
+    meetingStateSubscriber = handler;
+    return () => {};
+  });
+  mockRename.mockResolvedValue(undefined);
+  mockDelete.mockResolvedValue(undefined);
   mockList.mockResolvedValue([]);
   mockTranscript.mockResolvedValue([]);
+  mockNotesLoad.mockResolvedValue([]);
+  mockNotesSave.mockResolvedValue(undefined);
 });
 
 describe("RecordCard", () => {
@@ -134,12 +168,18 @@ describe("RecordCard", () => {
     await waitFor(() => expect(mockOn).toHaveBeenCalled());
 
     await userEvent.click(screen.getByRole("button", { name: /start recording/i }));
+    expect(mockStart).toHaveBeenCalled();
+
+    // The pill follows Rust's announcement rather than guessing optimistically —
+    // otherwise a start that failed in the core would still look like it worked.
+    act(() => meetingStateSubscriber({ state: "recording", meeting_id: "m123" }));
     expect(await screen.findByText("recording")).toBeInTheDocument();
 
     emit({
       kind: "event",
       event: { ev: "stopped", audio_path: "/tmp/a.m4a", duration_ms: 1000 },
     });
+    act(() => meetingStateSubscriber({ state: "armed" }));
 
     expect(await screen.findByText("idle")).toBeInTheDocument();
   });
@@ -160,9 +200,26 @@ describe("RecordCard", () => {
   it("recovers an in-progress recording after a reload", async () => {
     // The sidecar keeps capturing across a window reload; showing "idle" would
     // be a lie and the stop button would be unreachable.
-    mockActive.mockResolvedValue("m999");
+    mockState.mockResolvedValue({ state: "recording", meeting_id: "m999" });
     render(<RecordCard />);
     expect(await screen.findByText("recording")).toBeInTheDocument();
+  });
+
+  it("shows finalising, not idle, while a stop is still in flight", async () => {
+    // The audio file is not closed and late utterances have not arrived yet.
+    // Calling it idle would present a truncated recording as finished.
+    mockState.mockResolvedValue({ state: "processing", meeting_id: "m999" });
+    render(<RecordCard />);
+    expect(await screen.findByText("finalising")).toBeInTheDocument();
+    expect(screen.queryByText("idle")).not.toBeInTheDocument();
+  });
+
+  it("only offers Stop while actually recording", async () => {
+    mockState.mockResolvedValue({ state: "processing", meeting_id: "m999" });
+    render(<RecordCard />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^stop$/i })).toBeDisabled(),
+    );
   });
 
   it("loads a stored transcript with attribution intact", async () => {
@@ -268,6 +325,156 @@ describe("RecordCard", () => {
     render(<RecordCard />);
     await waitFor(() => expect(mockList).toHaveBeenCalled());
     expect(mockTranscript).not.toHaveBeenCalled();
+  });
+
+  it("shows each meeting's date and duration", async () => {
+    mockList.mockResolvedValue([
+      {
+        id: "m1",
+        title: "Quarterly planning",
+        startedAt: 1_700_000_000_000,
+        endedAt: 1_700_000_000_000 + 5 * 60 * 1000,
+        status: "complete",
+        audioPath: null,
+        utteranceCount: 3,
+      },
+    ]);
+    render(<RecordCard />);
+    expect(await screen.findByText(/5m/)).toBeInTheDocument();
+  });
+
+  it("shows a dash for a meeting that never ended", async () => {
+    mockList.mockResolvedValue([
+      {
+        id: "m1",
+        title: "Open",
+        startedAt: 1_700_000_000_000,
+        endedAt: null,
+        status: "interrupted",
+        audioPath: null,
+        utteranceCount: 0,
+      },
+    ]);
+    render(<RecordCard />);
+    expect(await screen.findByText(/—/)).toBeInTheDocument();
+  });
+
+  it("renames a meeting and reloads the list", async () => {
+    mockList.mockResolvedValue([
+      {
+        id: "m1",
+        title: "Untitled meeting",
+        startedAt: 1,
+        endedAt: 2,
+        status: "complete",
+        audioPath: null,
+        utteranceCount: 1,
+      },
+    ]);
+    vi.spyOn(window, "prompt").mockReturnValue("Quarterly planning");
+
+    render(<RecordCard />);
+    await userEvent.click(await screen.findByRole("button", { name: /rename/i }));
+
+    expect(mockRename).toHaveBeenCalledWith("m1", "Quarterly planning");
+    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not rename when the prompt is cancelled or blank", async () => {
+    mockList.mockResolvedValue([
+      {
+        id: "m1",
+        title: "Untitled meeting",
+        startedAt: 1,
+        endedAt: 2,
+        status: "complete",
+        audioPath: null,
+        utteranceCount: 1,
+      },
+    ]);
+
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
+    render(<RecordCard />);
+    await userEvent.click(await screen.findByRole("button", { name: /rename/i }));
+    expect(mockRename).not.toHaveBeenCalled();
+
+    prompt.mockReturnValue("   ");
+    await userEvent.click(screen.getByRole("button", { name: /rename/i }));
+    expect(mockRename).not.toHaveBeenCalled();
+  });
+
+  it("asks before deleting, because there is no undo", async () => {
+    mockList.mockResolvedValue([
+      {
+        id: "m1",
+        title: "Quarterly planning",
+        startedAt: 1,
+        endedAt: 2,
+        status: "complete",
+        audioPath: "/tmp/a.m4a",
+        utteranceCount: 1,
+      },
+    ]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(<RecordCard />);
+    await userEvent.click(await screen.findByRole("button", { name: /delete/i }));
+    expect(confirm).toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    await userEvent.click(screen.getByRole("button", { name: /delete/i }));
+    expect(mockDelete).toHaveBeenCalledWith("m1");
+  });
+
+  it("surfaces a refusal to delete a live recording", async () => {
+    mockList.mockResolvedValue([
+      {
+        id: "m1",
+        title: "Live",
+        startedAt: 1,
+        endedAt: null,
+        status: "recording",
+        audioPath: null,
+        utteranceCount: 1,
+      },
+    ]);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockDelete.mockRejectedValue(new Error("stop the recording before deleting it"));
+
+    render(<RecordCard />);
+    await userEvent.click(await screen.findByRole("button", { name: /delete/i }));
+
+    expect(
+      await screen.findByText(/stop the recording before deleting it/),
+    ).toBeInTheDocument();
+  });
+
+  it("reflects a recording started outside this component", async () => {
+    // Calendar detection (and the dev harness today) start meetings in Rust.
+    // Showing "idle" through a live recording would be a plain lie, and Stop
+    // would be unreachable.
+    render(<RecordCard />);
+    await waitFor(() => expect(mockOnState).toHaveBeenCalled());
+
+    act(() => meetingStateSubscriber({ state: "recording", meeting_id: "elsewhere" }));
+
+    expect(await screen.findByText("recording")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^stop$/i })).toBeEnabled();
+  });
+
+  it("follows the lifecycle through finalising back to idle", async () => {
+    render(<RecordCard />);
+    await waitFor(() => expect(mockOnState).toHaveBeenCalled());
+
+    act(() => meetingStateSubscriber({ state: "recording", meeting_id: "m1" }));
+    expect(await screen.findByText("recording")).toBeInTheDocument();
+
+    act(() => meetingStateSubscriber({ state: "processing", meeting_id: "m1" }));
+    expect(await screen.findByText("finalising")).toBeInTheDocument();
+
+    act(() => meetingStateSubscriber({ state: "armed" }));
+    expect(await screen.findByText("idle")).toBeInTheDocument();
   });
 
   it("arms without starting a recording", async () => {

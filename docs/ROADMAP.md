@@ -8,8 +8,9 @@
 |---|---|---|
 | 0 · Foundations | G1–G4 | ✅ **Complete** |
 | 1 · Capture pipeline | G5–G8 | ✅ **Complete** |
-| 2 · The meeting document | G9–G11 | Next |
-| 3–7 | G12–G29 | Not started |
+| 2 · The meeting document | G9–G11 | ✅ **Complete** |
+| 3 · Generation | G12–G15 | Next |
+| 4–7 | G16–G29 | Not started |
 
 Phase 0 notes:
 - **G2 answered the risk question: the architecture holds.** Dual-stream capture and
@@ -19,6 +20,20 @@ Phase 0 notes:
 - G17's linker inherits a dependency from G2: silence artifacts must be filtered
   before anything is linked, or notes will anchor to invented utterances. The
   `TranscriptFilter` gate now handles this.
+
+Phase 2 notes:
+- **G9 shipped without the Granola UI description** (the gate was never answered),
+  so the meeting view follows SPEC §9 as written: notepad primary, transcript
+  collapsible beside it. Worth revisiting once that description arrives.
+- Note blocks needed a migration. 0001 keyed them by `seq`, which breaks the
+  moment a line is inserted mid-document — every block below shifts and inherits
+  its neighbour's `first_typed_at_ms`. Since the linker keys on exactly that
+  timestamp, identity is now a stable editor-assigned `block_id`.
+- The lifecycle is an explicit state machine. `Processing` is a real state: `stop`
+  only *asks* the sidecar to finish, and the file is not complete until it answers.
+- Rust owns the lifecycle and emits changes; the frontend mirrors them. A meeting
+  started outside the record button — calendar detection in G22 — would otherwise
+  leave the UI showing "idle" through a live recording.
 
 Phase 1 notes:
 - **Speaker bleed is still open.** Without headphones the mic re-transcribes system
