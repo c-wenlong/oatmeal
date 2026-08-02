@@ -29,7 +29,15 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "rustls-tls",
+  # Multi-gigabyte model downloads stream to disk; buffering one in memory
+  # would need more RAM than the model itself.
+  "stream",
 ] }
+futures-util = "0.3"
+# llama.cpp ships macOS builds as .tar.gz. Extracted in-process rather than by
+# shelling out to `tar`, so the failure modes are typed instead of an exit code.
+flate2 = "1"
+tar = "0.4"
 # API keys live in the macOS Keychain, never in SQLite.
 keyring = { version = "3", features = ["apple-native"] }
 

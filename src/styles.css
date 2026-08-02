@@ -805,3 +805,69 @@ input:focus {
   outline: none;
   border-color: var(--accent);
 }
+
+/* ------------------------------------------------------- bundled downloads */
+
+.picker {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.picker-steps {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.picker-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.picker-step--done .picker-step-head {
+  color: var(--muted);
+}
+
+.picker-model {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.picker-model-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.picker-model-head strong {
+  flex: 1;
+}
+
+.picker-progress {
+  margin-top: 12px;
+}
+
+.picker-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+/* Width is driven from download progress; the transition keeps a 4 MB-interval
+   event stream from looking like a stuttering bar. */
+.picker-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 200ms linear;
+}

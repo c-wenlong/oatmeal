@@ -19,6 +19,9 @@ import type {
   StoredLink,
   LinkParams,
   IndexReport,
+  ModelOption,
+  ModelStatus,
+  DownloadProgress,
 } from "../types";
 import type { PermissionsSnapshot } from "./permissions";
 
@@ -183,6 +186,36 @@ export function runtimeState(): Promise<RuntimeState> {
 
 export function runtimeStart(): Promise<number> {
   return invoke<number>("runtime_start");
+}
+
+/** The curated model list the bundled runtime can fetch. */
+export function runtimeModels(): Promise<ModelOption[]> {
+  return invoke<ModelOption[]>("runtime_models");
+}
+
+export function runtimeModelStatus(): Promise<[string, ModelStatus][]> {
+  return invoke<[string, ModelStatus][]>("runtime_model_status");
+}
+
+/** Downloads llama-server. Progress arrives via `onDownloadProgress`. */
+export function runtimeInstallServer(): Promise<void> {
+  return invoke<void>("runtime_install_server");
+}
+
+/** Downloads a model. Gigabytes — always pair with progress and cancel. */
+export function runtimeInstallModel(modelId: string): Promise<void> {
+  return invoke<void>("runtime_install_model", { modelId });
+}
+
+/** Asks the running download to stop. Bytes already fetched are kept. */
+export function runtimeCancelDownload(): Promise<void> {
+  return invoke<void>("runtime_cancel_download");
+}
+
+export function onDownloadProgress(
+  handler: (progress: DownloadProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<DownloadProgress>("runtime://download", (e) => handler(e.payload));
 }
 
 export function runtimeStop(): Promise<void> {

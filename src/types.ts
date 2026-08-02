@@ -194,6 +194,28 @@ export type RuntimeState =
   | { state: "ready" }
   | { state: "running"; pid: number };
 
+/** Mirrors `ModelOption` in src-tauri/src/llm/bundled.rs. */
+export interface ModelOption {
+  id: string;
+  name: string;
+  url: string;
+  filename: string;
+  approxBytes: number;
+  note: string;
+}
+
+/** Mirrors `ModelStatus` in src-tauri/src/llm/bundled.rs. */
+export type ModelStatus =
+  { status: "absent" } | { status: "partial"; bytes: number } | { status: "installed" };
+
+/** Mirrors `DownloadProgress` in src-tauri/src/llm/download.rs. */
+export interface DownloadProgress {
+  id: string;
+  downloaded: number;
+  total: number | null;
+  done: boolean;
+}
+
 /** Mirrors `LinkMethod` in src-tauri/src/link/mod.rs. */
 export type LinkMethod = "temporal" | "semantic" | "llm";
 

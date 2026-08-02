@@ -39,13 +39,9 @@ Phase 3 notes:
   someone preferred survives a retry.
 - Both decision gates took their documented defaults: templates are prompt +
   enforced JSON schema, and regenerate forks.
-- **G13 is partial and knowingly so.** The runtime *management* is done: it
-  detects whether `llama-server` and a model are present, refuses to start with a
-  clear reason when they are not, treats a truncated model as missing, and binds
-  the server to loopback. The automated download is not wired up, so G13's
-  done-when — "a user with no API key can summarise offline after one guided
-  download" — is **not** met. Until then the offline path requires Ollama, LM
-  Studio, or dropping the files in by hand.
+- **G13 is now complete.** It shipped partial in Phase 3 (management without
+  downloading); the download was built afterwards and the done-when is met — see
+  the G13 entry below for what the verification turned up.
 
 Phase 2 notes:
 - **G9 shipped without the Granola UI description** (the gate was never answered),
@@ -172,6 +168,38 @@ Open questions from SPEC §13, mapped to the goal they block. Answer each just b
 **Depends on:** G12
 **Build:** JIT-download `llama-server` from llama.cpp GitHub releases on first use (not static-bundled). Verify the download, manage the process lifecycle, expose it as the `localhost:8080/v1` preset. Model picker with download progress.
 **Done when:** a user with no API key and no Ollama install can summarize a meeting entirely offline after one guided download.
+**Status:** ✅ Done, and **verified end to end against the real network** rather
+than assumed. `live_a_bare_machine_can_generate_after_downloading` (ignored by
+default) starts from an empty directory, downloads the server, downloads a model,
+launches `llama-server`, and gets a completion back. Last run: server 1.3s, model
+491 MB in 32s, model replied `"oatmeal"`.
+
+Downloads stream to a `.part` file and resume with a range request — a 4.7 GB model
+on a domestic line cannot be asked to restart. A `200` answer to a range request
+discards the partial rather than appending, because splicing the head of a file onto
+its middle produces corruption that survives every size check. Cancelling keeps the
+bytes.
+
+**Three things were broken and only measurement found them:**
+
+| What | Was | Actually |
+|---|---|---|
+| llama.cpp asset | `…-macos-arm64.zip` | **404** — upstream ships `.tar.gz` now |
+| Qwen 7B model URL | single `q4_k_m.gguf` | **404** — official repo splits it into two shards; switched to a single-file build |
+| Archive extraction | files only | the release has **18 symlinks**, and `libllama-common.0.dylib` — the name the binary asks dyld for — is one of them |
+
+The symlink one is the sharpest lesson: extracting only regular files produced a
+complete-looking install whose binary died with `Library not loaded`, and the first
+version of the live test *passed anyway* because its assertion was loose enough to
+match a dyld error. Both were fixed; removing the symlink handling now fails the test.
+
+Extraction is flattened deliberately (`LC_RPATH` is `@loader_path`, so the dylibs
+must sit beside the binary) and refuses `..` paths and symlinks pointing outside the
+runtime directory — this archive arrives over the network.
+
+The release tag is **pinned** (`SERVER_RELEASE`) rather than resolved from "latest":
+a verified build beats whatever landed upstream this morning, and the asset naming
+has already changed once.
 
 ### G14 · Templates and panel generation
 **Depends on:** G11, G12 · *gated on the template-authoring decision*
@@ -241,9 +269,11 @@ Two things worth recording:
   that restores the last meeting built its transcript lines without `utteranceId`,
   so on a cold start citation chips had nothing to scroll to. Fixed.
 
-**Deferred:** "note-derived summary bullets visually distinguished from
-transcript-only ones" — the panel already marks uncited bullets, but bullets are not
-yet distinguished by *note* versus *transcript* provenance.
+All three parts of the goal are built, including "note-derived summary bullets
+visually distinguished from transcript-only ones": `Bullet.from_note` carries the
+provenance, the prompt asks for it, `validate` drops it when the id is not a real
+note block, and `PanelView` renders it as a `note` badge with an accent rule down
+the side (`.bullet--from-note`). Covered by tests in `panel/content.rs`.
 
 **Not verifiable by the agent:** the hover itself. macOS withholds Accessibility
 permission here, so synthetic pointer events are dropped and the highlight cannot be

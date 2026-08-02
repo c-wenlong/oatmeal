@@ -74,6 +74,11 @@ pub struct AppState {
     pub llm: LlmClient,
     /// The `llama-server` Oatmeal can run itself, for the no-key offline path.
     pub runtime: llm::bundled::Runtime,
+    /// Shared HTTP client for downloads, so connection pooling survives across
+    /// a server fetch followed immediately by a multi-gigabyte model fetch.
+    pub http: reqwest::Client,
+    /// Set to ask an in-flight download to stop. Reset when one starts.
+    pub cancel_download: Arc<AtomicBool>,
     /// Last permission snapshot the sidecar reported.
     ///
     /// Cached because permissions arrive as a one-shot event: anything that
@@ -756,6 +761,69 @@ fn runtime_stop(state: tauri::State<'_, AppState>) {
     state.runtime.stop();
 }
 
+/// What is on disk for each curated model, so the picker can offer
+/// download / resume / installed rather than one undifferentiated button.
+#[tauri::command]
+fn runtime_model_status(
+    state: tauri::State<'_, AppState>,
+) -> Vec<(String, llm::bundled::ModelStatus)> {
+    llm::bundled::model_options()
+        .into_iter()
+        .map(|option| {
+            let status = state.runtime.model_status(&option.id);
+            (option.id, status)
+        })
+        .collect()
+}
+
+/// Downloads `llama-server`. Progress arrives on `runtime://download`.
+#[tauri::command]
+async fn runtime_install_server(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    state.cancel_download.store(false, Ordering::SeqCst);
+
+    let emitter = app.clone();
+    let cancel = state.cancel_download.clone();
+    state
+        .runtime
+        .install_server(
+            &state.http,
+            move |progress| {
+                let _ = emitter.emit("runtime://download", &progress);
+            },
+            move || cancel.load(Ordering::SeqCst),
+        )
+        .await
+}
+
+/// Downloads a model. Multi-gigabyte, so it reports progress and can be
+/// cancelled; a cancelled download keeps its bytes and resumes on retry.
+#[tauri::command]
+async fn runtime_install_model(app: tauri::AppHandle, model_id: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    state.cancel_download.store(false, Ordering::SeqCst);
+
+    let emitter = app.clone();
+    let cancel = state.cancel_download.clone();
+    state
+        .runtime
+        .install_model(
+            &state.http,
+            &model_id,
+            move |progress| {
+                let _ = emitter.emit("runtime://download", &progress);
+            },
+            move || cancel.load(Ordering::SeqCst),
+        )
+        .await
+}
+
+/// Asks the running download to stop. The partial file is kept deliberately.
+#[tauri::command]
+fn runtime_cancel_download(state: tauri::State<'_, AppState>) {
+    state.cancel_download.store(true, Ordering::SeqCst);
+}
+
 // -------------------------------------------------------------------- panels
 
 #[tauri::command]
@@ -1027,6 +1095,14 @@ pub fn run() {
                 keys: Box::new(Keychain),
                 llm: LlmClient::new(),
                 runtime: llm::bundled::Runtime::new(&dir),
+                http: reqwest::Client::builder()
+                    // No overall timeout: a 5 GB model on a slow line legitimately
+                    // takes an hour, and a deadline here would look like a network
+                    // fault. Stalls are caught by the read timeout instead.
+                    .read_timeout(std::time::Duration::from_secs(60))
+                    .build()
+                    .unwrap_or_default(),
+                cancel_download: Arc::new(AtomicBool::new(false)),
                 last_permissions: Mutex::new(None),
                 link_params: Mutex::new(link::LinkParams::default()),
             });
@@ -1076,6 +1152,10 @@ pub fn run() {
             runtime_models,
             runtime_start,
             runtime_stop,
+            runtime_model_status,
+            runtime_install_server,
+            runtime_install_model,
+            runtime_cancel_download,
             meeting_index,
             meeting_links,
             link_params_get,

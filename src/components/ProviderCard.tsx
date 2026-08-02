@@ -7,6 +7,7 @@ import {
   providersList,
   runtimeState,
 } from "../lib/tauri";
+import { ModelPicker } from "./ModelPicker";
 import type {
   ProviderConfig,
   ProviderInfo,
@@ -156,14 +157,17 @@ export function ProviderCard() {
           )}
 
           {selected.kind === "bundled" && runtime && (
-            <p className="empty-note">
-              {runtime.state === "not_installed" &&
-                "Not installed yet. Oatmeal downloads llama-server and a model on first use."}
-              {runtime.state === "needs_model" &&
-                "Runtime installed; no model downloaded yet."}
-              {runtime.state === "ready" && "Ready to start."}
-              {runtime.state === "running" && `Running (pid ${runtime.pid}).`}
-            </p>
+            <>
+              <p className="empty-note">
+                {runtime.state === "not_installed" &&
+                  "Nothing installed yet — start with step 1 below."}
+                {runtime.state === "needs_model" &&
+                  "Server installed; pick a model below."}
+                {runtime.state === "ready" && "Ready to start."}
+                {runtime.state === "running" && `Running (pid ${runtime.pid}).`}
+              </p>
+              {runtime.state !== "running" && <ModelPicker />}
+            </>
           )}
 
           <div className="row" style={{ marginTop: 12 }}>

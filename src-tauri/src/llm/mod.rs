@@ -9,6 +9,7 @@
 
 pub mod anthropic;
 pub mod bundled;
+pub mod download;
 pub mod keys;
 pub mod provider;
 
