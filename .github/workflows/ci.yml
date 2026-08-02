@@ -98,6 +98,10 @@ jobs:
         with:
           components: rustfmt, clippy, llvm-tools-preview
 
+      # Prebuilt binary — `cargo install cargo-llvm-cov` would add minutes to
+      # every run.
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
