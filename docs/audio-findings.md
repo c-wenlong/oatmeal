@@ -60,6 +60,43 @@ real usage mode and in-person meetings depend on the mic entirely.
 cancellation) on the mic path, and consider suppressing a mic utterance that
 closely matches a system utterance in the same window.
 
+### ✅ Fixed — but not the way the note above expected
+
+**What shipped:** `EchoSuppressor` (SidecarCore). Every settled line passes through
+one gate that sees both channels in the order they arrived. A system line becomes a
+candidate echo source, keyed on when it *finished* playing; a mic line is dropped
+when it shares enough wording with a recent one.
+
+Comparison is on **text, not audio** — by the time bleed has been through a speaker,
+a room, a microphone and an ASR model, the waveforms have nothing left in common but
+the words do. Overlap is measured as *containment* (share of the shorter line)
+rather than Jaccard, because the mic copy arrives clipped and mangled and Jaccard
+would punish it for the words the microphone lost.
+
+The deliberate bias is toward keeping too much: lines under four tokens are never
+suppressed. "Agreed", "the fourteenth", "sounds good" are exactly where genuine
+agreement lives, and on the words alone a repeat is indistinguishable from an echo.
+Deleting the user's own speech is a far worse failure than leaving a duplicate. Every
+drop is logged for the same reason.
+
+**Hardware AEC was tried and rejected — with measurements.** Enabling
+`setVoiceProcessingEnabled(true)` on this machine (macOS 26.5, built-in mic) breaks
+capture in three ways:
+
+| Check | Result |
+|---|---|
+| Input format with AEC off | `1 ch, 48 kHz` |
+| Input format with AEC on | `7 ch`–`9 ch`, **and the count varies between runs** |
+| `AVAudioConverter` 7ch → mono, ch0 = 1.0, rest 0.0 | outputs **0.0** — the layout discards the mic |
+| Frames captured in 3s, AEC off | **139,200** |
+| Frames captured in 3s, AEC on | **0** — the tap never fires |
+| Adding an output render path | `engine.start()` fails, `-10875` |
+
+Shipping that as a default would have traded a messy transcript for a silent
+microphone — losing the user's own half of every meeting. So it sits behind
+`OATMEAL_MIC_AEC=1`, off by default, with the channel-0 extraction already written
+for whoever verifies it on hardware where the IO unit actually initialises.
+
 ### 3. WhisperKit model downloads can land incomplete
 
 A run ended with:

@@ -13,6 +13,11 @@
 | 4 · The differentiator | G16–G18 | ✅ **Complete** (G17 partly — see notes) |
 | 5–7 | G19–G29 | Next |
 
+**Speaker bleed is fixed** (G2 finding #2, carried since Phase 0). `EchoSuppressor`
+drops mic lines that are the speakers coming back through the room. Hardware AEC was
+tried and rejected on measurement — it produces zero captured frames on this machine —
+so it sits behind `OATMEAL_MIC_AEC=1`. Details in `docs/audio-findings.md`.
+
 Phase 0 notes:
 - **G2 answered the risk question: the architecture holds.** Dual-stream capture and
   attribution work. It surfaced three real problems, now all fixed and

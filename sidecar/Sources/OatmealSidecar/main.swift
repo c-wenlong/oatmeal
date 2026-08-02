@@ -1,4 +1,5 @@
 import Foundation
+import SidecarCore
 import SidecarProtocol
 
 // Oatmeal sidecar.
@@ -65,10 +66,54 @@ capture.onError = { message in
 /// or multilingual model.
 let modelName = ProcessInfo.processInfo.environment["OATMEAL_ASR_MODEL"] ?? "small.en"
 let transcriber = Transcriber(model: modelName)
+/// Cross-channel echo guard.
+///
+/// Sits between the two transcribers and the wire, because it is the only point
+/// that sees both channels' finals in the order they settled.
+///
+/// A class with the lock inside rather than a global `var` and a separate lock:
+/// the two transcribers are independent tasks and emit concurrently, so the
+/// synchronisation has to be part of the thing being shared. `@unchecked
+/// Sendable` is the claim that `lock` makes this safe, and it is true only
+/// because every access to `suppressor` goes through `admit`.
+final class EchoGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var suppressor = EchoSuppressor()
+
+    func admit(isMic: Bool, text: String, t0: Int, t1: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return suppressor.admit(isMic: isMic, text: text, t0: t0, t1: t1)
+    }
+}
+
+let echoGate = EchoGate()
+
+/// Emits a transcript event unless it is the speakers bleeding into the mic.
+///
+/// Only `final` is judged. Partials are in-flight text that a later final
+/// supersedes, so suppressing them would make the live view flicker without
+/// changing what is ultimately stored.
+func emitTranscript(_ event: SidecarEvent) {
+    switch event {
+    case .final(let source, let text, let t0, let t1, _):
+        if !echoGate.admit(isMic: source == .mic, text: text, t0: t0, t1: t1) {
+            // Logged rather than silent: a suppressor that is too eager deletes
+            // the user's own words, and there would otherwise be no trace of it
+            // having happened.
+            Log.info("Dropped mic line as speaker bleed: \(text)")
+            return
+        }
+        emit(event)
+    default:
+        emit(event)
+    }
+}
+
 let micTranscriber = StreamingTranscriber(
-    source: .mic, transcriber: transcriber, emit: emit)
+    source: .mic, transcriber: transcriber, emit: emitTranscript)
 let systemTranscriber = StreamingTranscriber(
-    source: .system, transcriber: transcriber, emit: emit)
+    source: .system, transcriber: transcriber, emit: emitTranscript)
 
 // Audio only reaches the model while recording; arming alone never transcribes.
 capture.onAudio = { source, samples in
