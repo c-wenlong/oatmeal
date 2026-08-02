@@ -24,6 +24,9 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    env:
+      # `secrets` is not available in a step-level `if`; job env is.
+      HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -62,7 +65,7 @@ jobs:
       # Skipped rather than silently 401ing when the token is absent — this repo
       # is private, so Codecov cannot accept tokenless uploads.
       - uses: codecov/codecov-action@v5
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        if: env.HAS_CODECOV == 'true'
         with:
           files: ./coverage/frontend/lcov.info
           flags: frontend
@@ -73,6 +76,8 @@ jobs:
   swift:
     name: Swift sidecar
     runs-on: macos-latest
+    env:
+      HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -102,7 +107,7 @@ jobs:
       # Skipped rather than silently 401ing when the token is absent — this repo
       # is private, so Codecov cannot accept tokenless uploads.
       - uses: codecov/codecov-action@v5
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        if: env.HAS_CODECOV == 'true'
         with:
           files: ./coverage/swift-lcov.info
           flags: swift
@@ -113,6 +118,8 @@ jobs:
   rust:
     name: Rust core
     runs-on: macos-latest
+    env:
+      HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -185,7 +192,7 @@ jobs:
       # Skipped rather than silently 401ing when the token is absent — this repo
       # is private, so Codecov cannot accept tokenless uploads.
       - uses: codecov/codecov-action@v5
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        if: env.HAS_CODECOV == 'true'
         with:
           files: ./coverage/rust-lcov.info
           flags: rust
