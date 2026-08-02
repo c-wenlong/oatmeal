@@ -35,8 +35,7 @@ export function reconcileBlocks(
     // An empty block has not been "typed in" yet — stamping it on creation
     // would anchor to the moment the user pressed Enter rather than the moment
     // they actually wrote something.
-    const firstTypedAtMs =
-      existing?.firstTypedAtMs ?? (hasText ? elapsedMs : null);
+    const firstTypedAtMs = existing?.firstTypedAtMs ?? (hasText ? elapsedMs : null);
 
     // Only a genuine text change advances last-edited; re-saving unchanged
     // notes (autosave ticks, reordering) must not churn it.

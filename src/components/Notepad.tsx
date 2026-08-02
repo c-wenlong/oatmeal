@@ -69,21 +69,18 @@ export function Notepad({ meetingId, elapsedMs, onSaveStateChange }: Props) {
     },
   });
 
-  const persist = useCallback(
-    async (target: string, blocks: NoteBlock[]) => {
-      setSaveState("saving");
-      try {
-        await notesSave(target, blocks);
-        saved.current = blocks;
-        setSaveState("saved");
-      } catch {
-        // Left as an error rather than retried silently: unsaved notes the user
-        // believes are safe is the worst outcome here.
-        setSaveState("error");
-      }
-    },
-    [],
-  );
+  const persist = useCallback(async (target: string, blocks: NoteBlock[]) => {
+    setSaveState("saving");
+    try {
+      await notesSave(target, blocks);
+      saved.current = blocks;
+      setSaveState("saved");
+    } catch {
+      // Left as an error rather than retried silently: unsaved notes the user
+      // believes are safe is the worst outcome here.
+      setSaveState("error");
+    }
+  }, []);
 
   const scheduleSave = useCallback(() => {
     if (!editor || !currentMeeting.current) return;

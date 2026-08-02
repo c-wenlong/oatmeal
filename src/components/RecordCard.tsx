@@ -93,7 +93,8 @@ export function RecordCard() {
   const [transcriptOpen, setTranscriptOpen] = useState(true);
 
   const elapsedMs = useCallback(
-    () => (recordingStartedAt.current === null ? 0 : Date.now() - recordingStartedAt.current),
+    () =>
+      recordingStartedAt.current === null ? 0 : Date.now() - recordingStartedAt.current,
     [],
   );
 
@@ -270,7 +271,9 @@ export function RecordCard() {
     guard(async () => {
       // Deleting a meeting destroys its transcript, notes and audio, and there
       // is no undo — so this asks first.
-      if (!window.confirm(`Delete "${title}"? Its transcript, notes and audio go too.`)) {
+      if (
+        !window.confirm(`Delete "${title}"? Its transcript, notes and audio go too.`)
+      ) {
         return;
       }
       await meetingDelete(meetingId);
@@ -352,7 +355,9 @@ export function RecordCard() {
       <div className="meeting-body">
         <Notepad meetingId={viewing ?? active} elapsedMs={elapsedMs} />
 
-        <div className={transcriptOpen ? "transcript" : "transcript transcript--closed"}>
+        <div
+          className={transcriptOpen ? "transcript" : "transcript transcript--closed"}
+        >
           <div className="transcript-head">
             <span className="notepad-label">Transcript</span>
             <button
@@ -405,10 +410,16 @@ export function RecordCard() {
                 </span>
               </button>
               <span className="meeting-actions">
-                <button className="link-button" onClick={() => rename(meeting.id, title)}>
+                <button
+                  className="link-button"
+                  onClick={() => rename(meeting.id, title)}
+                >
                   Rename
                 </button>
-                <button className="link-button" onClick={() => remove(meeting.id, title)}>
+                <button
+                  className="link-button"
+                  onClick={() => remove(meeting.id, title)}
+                >
                   Delete
                 </button>
               </span>

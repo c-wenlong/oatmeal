@@ -112,10 +112,7 @@ describe("persistableBlocks", () => {
   });
 
   it("drops the trailing empty paragraph editors always leave", () => {
-    const result = persistableBlocks([
-      make("b1", "real note", 0),
-      make("b2", "", 1),
-    ]);
+    const result = persistableBlocks([make("b1", "real note", 0), make("b2", "", 1)]);
     expect(result).toHaveLength(1);
     expect(result[0].blockId).toBe("b1");
   });
@@ -169,7 +166,9 @@ describe("hasUnsavedChanges", () => {
 
   it("notices edited text, new blocks, deletions and reorders", () => {
     const saved = [make("b1", "text", 0), make("b2", "other", 1)];
-    expect(hasUnsavedChanges([make("b1", "changed", 0), make("b2", "other", 1)], saved)).toBe(true);
+    expect(
+      hasUnsavedChanges([make("b1", "changed", 0), make("b2", "other", 1)], saved),
+    ).toBe(true);
     expect(hasUnsavedChanges([make("b1", "text", 0)], saved)).toBe(true);
     expect(
       hasUnsavedChanges([make("b2", "other", 0), make("b1", "text", 1)], saved),

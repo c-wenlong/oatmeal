@@ -126,7 +126,9 @@ describe("Notepad", () => {
     await userEvent.keyboard("note");
 
     // Silently swallowing this would leave the user believing notes are safe.
-    expect(await screen.findByText("not saved", {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(
+      await screen.findByText("not saved", {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
   });
 
   it("shows a saved indicator once notes are written", async () => {
