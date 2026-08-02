@@ -1,0 +1,45 @@
+# Three languages, three flags, so a drop is attributable to the layer that
+# caused it rather than averaged away across the whole repo.
+coverage:
+  status:
+    project:
+      default:
+        # Coverage moves around while a feature lands; only a real slide should
+        # fail a build.
+        threshold: 2%
+      frontend:
+        flags: [frontend]
+        threshold: 2%
+      rust:
+        flags: [rust]
+        threshold: 2%
+      swift:
+        flags: [swift]
+        threshold: 2%
+    patch:
+      default:
+        # New code should arrive tested. Lower than 100% because a patch often
+        # includes wiring that only the app exercises.
+        target: 75%
+        threshold: 5%
+
+flag_management:
+  individual_flags:
+    - name: frontend
+      paths: [src/]
+    - name: rust
+      paths: [src-tauri/src/]
+    - name: swift
+      paths: [sidecar/Sources/]
+
+ignore:
+  - "docs/"
+  - "scripts/"
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "sidecar/Tests/"
+  - "src-tauri/tests/"
+
+comment:
+  layout: "condensed_header, diff, flags, files"
+  require_changes: true

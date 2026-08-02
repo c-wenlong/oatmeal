@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Never spend CI time downloading a ~500MB speech model. Nothing in the test
+  # suites loads WhisperKit — the Rust integration tests use the sidecar's
+  # `--fixture` mode, which needs neither a model nor any permissions.
+  OATMEAL_ASR_MODEL: tiny.en
+
+jobs:
+  # Ubuntu: the frontend needs no macOS frameworks, and Linux runners are ~10x
+  # cheaper. Only the jobs that genuinely need Apple toolchains run on macOS.
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Test with coverage
+        run: pnpm test:coverage
+
+      - uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage/frontend/lcov.info
+          flags: frontend
+          name: frontend
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  swift:
+    name: Swift sidecar
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version && xcodebuild -version
+
+      # WhisperKit is a large SPM dependency; resolving it from scratch on every
+      # run dominates this job's wall clock.
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: sidecar/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('sidecar/Package.resolved', 'sidecar/Package.swift') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Test with coverage
+        run: bash scripts/swift-coverage.sh
+
+      - uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage/swift-lcov.info
+          flags: swift
+          name: swift
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  rust:
+    name: Rust core
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `tauri::generate_context!` embeds the built frontend, so `dist/` must
+      # exist before anything in src-tauri compiles — including the tests.
+      - name: Build frontend
+        run: pnpm build
+
+      # `bundle.externalBin` makes tauri-build fail if the sidecar is missing,
+      # and the integration tests skip without it.
+      - name: Build sidecar
+        run: pnpm sidecar:build
+
+      - name: Assert the sidecar is staged
+        run: |
+          BIN=src-tauri/binaries/oatmeal-sidecar-aarch64-apple-darwin
+          test -f "$BIN" || { echo "::error::sidecar missing; integration tests would silently skip"; exit 1; }
+          echo "OATMEAL_SIDECAR_PATH=$PWD/$BIN" >> "$GITHUB_ENV"
+
+      - name: Format check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test with coverage
+        working-directory: src-tauri
+        run: >
+          cargo llvm-cov --lcov
+          --output-path ../coverage/rust-lcov.info
+          --ignore-filename-regex '(tests/|target/)'
+
+      - uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage/rust-lcov.info
+          flags: rust
+          name: rust
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false

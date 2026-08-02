@@ -1,0 +1,252 @@
+# Oatmeal — Roadmap to v1
+
+**Source of truth:** [SPEC.md](./SPEC.md). Where this doc and the spec disagree, the spec wins — fix this doc.
+
+## Status
+
+| Phase | Goals | State |
+|---|---|---|
+| 0 · Foundations | G1–G4 | ✅ **Complete** |
+| 1 · Capture pipeline | G5–G8 | ✅ **Complete** |
+| 2 · The meeting document | G9–G11 | Next |
+| 3–7 | G12–G29 | Not started |
+
+Phase 0 notes:
+- **G2 answered the risk question: the architecture holds.** Dual-stream capture and
+  attribution work. It surfaced three real problems, now all fixed and
+  regression-tested — see [audio-findings.md](./audio-findings.md). The spike itself
+  has been deleted; its capture code lives in `sidecar/`.
+- G17's linker inherits a dependency from G2: silence artifacts must be filtered
+  before anything is linked, or notes will anchor to invented utterances. The
+  `TranscriptFilter` gate now handles this.
+
+Phase 1 notes:
+- **Speaker bleed is still open.** Without headphones the mic re-transcribes system
+  audio, so one sentence lands on both channels. Documented, not fixed — it needs
+  echo cancellation and was out of scope here.
+- Recording is a three-state engine — idle / armed / recording — so the ~60s
+  pre-roll can fill without leaving the mic hot from launch.
+- Meetings left mid-recording by a crash are recovered to `interrupted` at startup;
+  without that they blocked the next recording forever.
+
+---
+
+29 sequential goals in 8 phases. Each goal states what it depends on, what to build, and a **Done when** that is observable — not "code written" but "this behaviour can be demonstrated." Work them in order. Don't start a goal whose dependency is unmet.
+
+**Ordering principle:** the two things that can kill this project are dual-stream macOS audio capture (G2/G6/G7) and note-link quality (G17). Audio is proved on day one with a throwaway spike, before any investment in app structure. Link quality can't be proved early — it needs real meetings — so G17 is scheduled right after the app becomes usable enough to generate them.
+
+---
+
+## Decision gates
+
+Open questions from SPEC §13, mapped to the goal they block. Answer each just before its goal, not now.
+
+| Question | Blocks | Default if unanswered |
+|---|---|---|
+| Granola UI description | **G9** | Build from SPEC §9 as written |
+| Template authoring: prompt-only or prompt + schema? | **G14** | Prompt + enforced JSON schema |
+| Panel editing: does regenerate overwrite or fork? | **G15** | Fork — edits are never destroyed |
+| In-person diarization: accept degradation? | **G7** | Accept for v1; FluidAudio deferred |
+| Notion export shape + property mapping | **G26** | One page per meeting in a chosen database |
+
+---
+
+## Phase 0 — Foundations
+
+### G1 · Repo hygiene and Tauri scaffold
+**Depends on:** nothing
+**Build:** Tauri v2 + React + TypeScript + Vite. `.gitignore`, `README.md`, MIT `LICENSE`, formatter/linter config for both Rust and TS. Directory layout: `src/` (React), `src-tauri/` (Rust), `sidecar/` (Swift package), `docs/`.
+**Done when:** `pnpm tauri dev` opens a window rendering a React component, hot reload works, and `cargo clippy` + `tsc --noEmit` both pass clean.
+
+### G2 · Audio + ASR spike ⚠️ highest risk
+**Depends on:** G1
+**Build:** A **standalone, throwaway** Swift CLI — no Tauri, no React. Captures system audio via ScreenCaptureKit (audio-only) and mic via AVAudioEngine as two independent streams, feeds both to WhisperKit, prints timestamped transcript lines tagged `mic` / `system` to stdout.
+**Done when:** you run it, play a YouTube video while talking, and see two correctly-attributed interleaved transcript streams in the terminal.
+**Why first:** this is where projects of this shape stall. If ScreenCaptureKit's audio-only mode, permission flow, or WhisperKit streaming has a blocking problem, we find out in a day rather than a month. Everything after this assumes it works. **Delete the spike once G6/G7 land** — it's a probe, not a foundation.
+
+### G3 · Data layer
+**Depends on:** G1
+**Build:** `rusqlite` with a versioned migration runner. Full schema from SPEC §8. FTS5 virtual tables over `utterances.text`, `note_blocks.text`, and panel plaintext. `sqlite-vec` extension loaded for `embeddings`. DB lives in the app support directory.
+**Done when:** migrations run from empty to current on launch, are idempotent on relaunch, and an integration test inserts a meeting with utterances and note blocks, then round-trips them through both FTS and vector queries.
+
+### G4 · Sidecar contract and handshake
+**Depends on:** G1, G3
+**Build:** Swift package built as a Tauri v2 sidecar with the `aarch64-apple-darwin` suffix. Newline-delimited JSON over stdio per SPEC §3. At this stage the sidecar **emits scripted fake events** — no real audio. Rust side: spawn, supervise, parse, restart on crash, surface events to the frontend over Tauri's event channel.
+**Done when:** the sidecar is spawned by the packaged app, fake `partial`/`final`/`level` events arrive in the React devtools console in order, and killing the sidecar process externally causes a clean restart with a logged error.
+**Why fake events first:** it decouples the IPC/supervision problem from the audio problem, so G6's debugging is purely about audio.
+
+---
+
+## Phase 1 — Capture pipeline
+
+### G5 · Permissions manager
+**Depends on:** G4
+**Build:** Detect and request Screen Recording and Microphone permission. Report status to the UI. Handle the macOS quirk that Screen Recording grants often need an app relaunch. A blocking pre-flight screen when either is missing, with a deep link to the right System Settings pane.
+**Done when:** on a machine with permissions revoked, the app explains exactly what's missing, opens the correct settings pane, and recovers without a manual quit.
+
+### G6 · Dual-stream capture, ring buffer, audio persistence
+**Depends on:** G2, G5
+**Build:** Port the spike's capture half into the real sidecar. Two streams stay separate. A continuous ~60s ring buffer so "record now" retroactively captures what just happened. Encode to a single two-channel AAC/Opus file; return the path and duration on stop.
+**Done when:** a 10-minute recording produces a ~5MB two-channel file where channel 1 is you and channel 2 is system audio, and starting mid-conversation includes the preceding ~60s.
+
+### G7 · WhisperKit streaming
+**Depends on:** G6
+**Build:** Port the spike's ASR half. Sliding ~30s windows with ~5s overlap, plus overlap reconciliation so words aren't duplicated at boundaries. Emit `partial` for the live UI and `final` once a window settles. Model download on first run with progress; `small.en` default, `tiny.en` and multilingual `small` selectable.
+**Done when:** live partials appear within ~2s of speech, finals are stable and free of boundary duplication, and switching models in settings takes effect on the next recording.
+
+### G8 · First vertical slice
+**Depends on:** G3, G7
+**Build:** Wire it end to end. Rust persists `final` events as `utterances`. React renders a live transcript with `You` / `Them` attribution and timestamps. Start/stop from a temporary debug button.
+**Done when:** you press record, talk over a call, press stop, and the full transcript is in SQLite and re-renders correctly after an app restart. **This is the first genuinely useful build.**
+
+---
+
+## Phase 2 — The meeting document
+
+### G9 · Notepad with block timing
+**Depends on:** G8 · *gated on the Granola UI description*
+**Build:** Block-structured editor (TipTap/ProseMirror — matches Granola's own model and gives us the panel structure for free). Every block records `first_typed_at_ms` and `last_edited_at_ms` relative to meeting start. Autosave. Notepad is the primary column; transcript is a collapsible secondary panel.
+**Done when:** notes typed during a recording persist with accurate per-block timings, verifiable in the DB, and survive an app crash mid-meeting.
+
+### G10 · Meeting lifecycle
+**Depends on:** G9
+**Build:** Explicit state machine — `idle → armed → recording → processing → complete` — owning the sidecar, the audio file, and DB writes. Crash recovery: a meeting left in `recording` on launch is recovered from whatever was persisted rather than lost.
+**Done when:** every transition is driven through the state machine, and force-quitting mid-recording leaves a recoverable meeting with its transcript up to the crash point.
+
+### G11 · Library
+**Depends on:** G10
+**Build:** Meeting list with date, title, duration. Open a past meeting into the same view as a live one, minus the recording controls. Rename, delete.
+**Done when:** you can navigate a week of meetings and reopen any of them with notes and transcript intact.
+
+---
+
+## Phase 3 — Generation
+
+### G12 · LLM provider layer
+**Depends on:** G3
+**Build:** One internal interface, OpenAI chat-completions shaped. Presets per SPEC §10 (Anthropic via thin adapter, OpenAI, OpenRouter, Ollama, LM Studio). Keys in the **macOS Keychain**, never SQLite. Settings UI: pick provider, pick model, test-connection button. Streaming responses.
+**Done when:** each configured provider round-trips a test prompt, keys survive relaunch, and no key is ever written to the DB or logs.
+
+### G13 · Bundled local inference
+**Depends on:** G12
+**Build:** JIT-download `llama-server` from llama.cpp GitHub releases on first use (not static-bundled). Verify the download, manage the process lifecycle, expose it as the `localhost:8080/v1` preset. Model picker with download progress.
+**Done when:** a user with no API key and no Ollama install can summarize a meeting entirely offline after one guided download.
+
+### G14 · Templates and panel generation
+**Depends on:** G11, G12 · *gated on the template-authoring decision*
+**Build:** Built-in templates (default summary, 1:1, standup, sales call, interview) plus user-defined ones. The summarizer receives the transcript with stable utterance IDs **and** the notes with block IDs, and returns structured output where each bullet carries `source_utterances` and optional `from_note`. **Validate every returned ID against the DB and silently drop invalid ones** — this is the anti-hallucination gate. Repair-retry path for local models that ignore the schema.
+**Done when:** ending a meeting produces a panel whose every citation resolves to a real utterance, and a deliberately hallucinated ID injected in a test is dropped rather than rendered.
+
+### G15 · Panel UI
+**Depends on:** G14 · *gated on the edit/regenerate decision*
+**Build:** Generated panel above the notes. Template switcher, regenerate. Citation chips that scroll the transcript to the cited utterance. Multiple panels per meeting, since panels are regenerable and the transcript is not.
+**Done when:** switching templates generates a second panel without touching the transcript, the notes, or the first panel, and every chip navigates correctly.
+
+---
+
+## Phase 4 — The differentiator
+
+### G16 · Local embeddings
+**Depends on:** G3
+**Build:** Local embedding model (bge-small or EmbeddingGemma via CoreML in the sidecar, or `fastembed-rs` in the core — benchmark both, pick on latency). Embed utterances and note blocks on meeting completion, in the background. Store via `sqlite-vec`. Backfill job for pre-existing meetings.
+**Done when:** a one-hour meeting embeds in under ~30s in the background without blocking the UI, and nearest-neighbour lookup returns semantically sensible utterances.
+
+### G17 · Layered linker ⚠️ highest-risk feature
+**Depends on:** G14, G16
+**Build:** All three layers per SPEC §7. Temporal candidates in `[T-45s, T+10s]`, asymmetric because you type *after* hearing. Semantic rerank, combined `α·temporal + β·semantic`. Global semantic pass to catch late notes, added as a second link when it beats the windowed best by a margin. LLM citations from G14 merged in. Every link stored with its `method` and `score`.
+**Done when:** across 10 real meetings, hand-review says the top link for each note block is correct materially more often than the timestamp-only baseline. **Build the baseline first and measure against it** — otherwise there's no way to know if the semantic layer is helping or hurting.
+
+### G18 · Linking UI and tuning
+**Depends on:** G17
+**Build:** Hovering a note block highlights its linked transcript spans; hovering a transcript span highlights the notes drawn from it. Note-derived summary bullets visually distinguished from transcript-only ones. A debug panel exposing α/β and showing per-link method and score.
+**Done when:** the bidirectional highlight is correct and legible on a one-hour meeting, and α/β can be tuned live against a real meeting without a rebuild.
+
+---
+
+## Phase 5 — Autonomy
+
+### G19 · Menu bar widget and manual capture
+**Depends on:** G10
+**Build:** Menu bar item: recording status with elapsed time, "Record now", recent meetings list, open main window, quit. Global hotkey to start/stop. This is the manual path — always available regardless of detection.
+**Done when:** a meeting can be recorded start to finish without ever opening the main window, and the hotkey works while another app is focused.
+
+### G20 · Calendar sync
+**Depends on:** G3
+**Build:** Google Calendar + Microsoft Graph OAuth, **read-only**, tokens in Keychain. Poll every ~5 min into `calendar_events`. Meeting-shaped heuristic: has a conferencing URL, or ≥2 attendees, or an explicit location. Skippable during onboarding — the app must work fully without it.
+**Done when:** today's events appear in-app within 5 minutes of being created in Google Calendar, and revoking access degrades gracefully to manual + mic detection.
+
+### G21 · Mic-activation watcher
+**Depends on:** G19
+**Build:** Poll which processes hold the audio input device. **Nothing fires without an explicit per-app rule.** Ship the built-in allowlist (Zoom, Meet in Chrome/Safari/Arc, Teams, Slack, Discord, FaceTime, Webex). An unknown app triggers a one-time "Should Oatmeal offer to record when *X* uses the mic?" with Always / Never; Never is permanent.
+**Done when:** Zoom triggers a candidate and a dictation tool like Whisperflow does not — and after choosing Never once, it never asks again.
+
+### G22 · Detection orchestrator and popup
+**Depends on:** G20, G21
+**Build:** One candidate queue fed by calendar, mic, and manual. Deduplicate — a calendar event and a mic activation for the same call must produce one popup, not two. Floating always-on-top window: title (from calendar when known), Start / Ignore / Ignore-this-app. Auto-dismiss after ~60s as Ignore. **Never auto-records without consent.**
+**Done when:** a calendar meeting pops up at `start - lead`, joining it does not produce a second popup, Start begins recording with the calendar title and attendees pre-filled, and nothing is ever recorded unprompted.
+
+### G23 · Detection settings
+**Depends on:** G22
+**Build:** Configurable calendar lead time (default 90s). The two-column app list — allowed vs ignored — fully editable, with a way to add an app not yet seen. Master toggles per trigger source.
+**Done when:** every detection behaviour from G20–G22 is reachable and reversible from the UI, with no hardcoded values left.
+
+---
+
+## Phase 6 — Corpus
+
+### G24 · Folders and search
+**Depends on:** G16, G11
+**Build:** Folder CRUD, assign meetings to folders. Search combining FTS5 keyword and vector similarity, results grouped by meeting with matched-span previews.
+**Done when:** searching a phrase you remember imperfectly from three weeks ago finds the right meeting and jumps to the right moment in the transcript.
+
+### G25 · Chat over meetings
+**Depends on:** G24
+**Build:** Chat scoped to one meeting or a whole folder. Retrieval over `utterances` + `panels`, answers citing meeting and timestamp. Uses the G12 provider layer, so it works locally.
+**Done when:** "what did we commit to across these calls?" over a folder of five meetings returns an answer whose every claim carries a citation that resolves.
+
+---
+
+## Phase 7 — Ship
+
+### G26 · Notion export
+**Depends on:** G15 · *gated on the export-shape decision*
+**Build:** Notion integration token, database picker, property mapping (title, date, duration, attendees, folder). Export the panel plus optionally the transcript. Store the Notion page ID so re-export updates rather than duplicates. Optional auto-export on meeting completion.
+**Done when:** completing a meeting creates a correctly-propertied Notion page, and regenerating a panel then re-exporting updates that same page instead of creating a second one.
+
+### G27 · Retention and the privacy surface
+**Depends on:** G6
+**Build:** Background sweeper deleting audio past `audio_expires_at` (default 7 days, configurable, "keep forever" allowed). Manual purge-all-audio. A privacy panel showing which provider generated each panel, since `panels.provider` is stored per generation. Confirm no telemetry anywhere in the build.
+**Done when:** audio older than the window is gone on next launch while transcripts and notes are untouched, and the panel truthfully reports the local-vs-cloud provenance of every generation.
+
+### G28 · Onboarding
+**Depends on:** G13, G20, G23
+**Build:** First-run flow: permissions → ASR model download → provider choice (including the fully-local path) → optional calendar connect → detection defaults explanation.
+**Done when:** a fresh machine with no keys and no calendar reaches a first successful recording without touching a settings screen.
+
+### G29 · Packaging and release
+**Depends on:** all
+**Build:** Developer ID signing, notarization, hardened runtime with the audio/screen entitlements, DMG, Sparkle updater with an appcast. CI to build and notarize a release.
+**Done when:** the DMG installs on a clean machine with no Gatekeeper warning and successfully auto-updates from the previous version.
+
+---
+
+## Sequencing at a glance
+
+```
+G1 ──┬─ G2 (spike) ────────────┐
+     ├─ G3 (data) ─────────┐   │
+     └─ G4 (sidecar) ─ G5 ─┴─ G6 ─ G7 ─ G8 ─ G9 ─ G10 ─ G11
+                                                    │      │
+                          G12 ─ G13                 │      │
+                            └──────────── G14 ─ G15 ┘      │
+                          G16 ─────┴ G17 ─ G18             │
+                                                     G19 ──┤
+                          G20 ─┬─ G22 ─ G23                │
+                          G21 ─┘                           │
+                          G24 ─ G25 ────────────────────────┘
+                          G26 · G27 · G28 ─ G29
+```
+
+**First useful build:** G8. **First build worth using daily:** G15. **First build that feels like Granola:** G22. **v1:** G29.
+
+Phases 3 (generation) and 4 (differentiator) can overlap with Phase 5 (autonomy) if work is ever parallelised — they share only the data layer. Everything in Phases 0–2 is strictly sequential.

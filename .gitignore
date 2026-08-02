@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+dist-ssr/
+target/
+*.local
+
+# Swift / SPM
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+sidecar/bin/
+spike/bin/
+
+# Tauri sidecar binaries (built artifacts, arch-suffixed)
+src-tauri/binaries/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+
+# Test / coverage
+coverage/
+.nyc_output/
+*.log
+test-results/
+
+# Local runtime data
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.env
+.env.local
