@@ -144,7 +144,10 @@ jobs:
 
       - name: Test with coverage
         working-directory: src-tauri
+        # `coverage/` is gitignored, so it does not exist on a fresh checkout and
+        # llvm-cov will not create the parent directory itself.
         run: >
+          mkdir -p ../coverage &&
           cargo llvm-cov --lcov
           --output-path ../coverage/rust-lcov.info
           --ignore-filename-regex '(tests/|target/)'
