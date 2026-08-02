@@ -54,6 +54,7 @@ rather than merely compiling:
 | Card | Proves |
 |---|---|
 | **Record** | Captures both streams, transcribes on device, persists attributed lines to SQLite, and reopens them after a restart. Notes sit beside the transcript; each block records when it was first typed, which is what the summariser will use as an anchor. |
+| **Summarisation model** | Which model writes summaries — Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, or a bundled llama.cpp. Keys go to the macOS Keychain, never the database. |
 | **Permissions** | Microphone and Screen Recording state, with deep links and the stale-grant relaunch case |
 | **Rust core** | Tauri IPC round-trips between the webview and Rust |
 | **Sidecar** | The Swift sidecar spawns, handshakes, streams events, and is restarted when it dies |
@@ -84,10 +85,17 @@ Neither does anything unless set.
 ## Tests
 
 ```bash
-pnpm verify            # typecheck + lint + frontend tests (104)
+pnpm verify            # typecheck + lint + frontend tests (117)
 pnpm sidecar:test      # Swift protocol + audio-core tests (84)
-cd src-tauri && cargo test    # Rust unit + integration (94)
+cd src-tauri && cargo test    # Rust unit + integration (188)
 ```
+
+**Every citation is checked before it is shown.** A model asked to cite its
+sources will invent ids that look plausible, and a chip that scrolls nowhere
+reads as proof. So each id is validated against the database and dropped if it
+does not resolve; a bullet that loses all of them is marked *uncited* rather than
+deleted. `cargo test --test panel_generation` proves this against a real HTTP
+endpoint, and also runs a live check against Ollama when one is serving.
 
 Coverage, as CI reports it:
 

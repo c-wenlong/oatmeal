@@ -9,8 +9,9 @@
 | 0 · Foundations | G1–G4 | ✅ **Complete** |
 | 1 · Capture pipeline | G5–G8 | ✅ **Complete** |
 | 2 · The meeting document | G9–G11 | ✅ **Complete** |
-| 3 · Generation | G12–G15 | Next |
-| 4–7 | G16–G29 | Not started |
+| 3 · Generation | G12–G15 | ✅ **Complete** |
+| 4 · The differentiator | G16–G18 | Next |
+| 5–7 | G19–G29 | Not started |
 
 Phase 0 notes:
 - **G2 answered the risk question: the architecture holds.** Dual-stream capture and
@@ -20,6 +21,26 @@ Phase 0 notes:
 - G17's linker inherits a dependency from G2: silence artifacts must be filtered
   before anything is linked, or notes will anchor to invented utterances. The
   `TranscriptFilter` gate now handles this.
+
+Phase 3 notes:
+- **The citation gate is the point of this phase.** Nothing a model returns is
+  trusted: every utterance and note id is checked against the database and dropped
+  if it does not resolve. Verified against a live model — gemma4:e2b invented
+  citations on two separate runs and both were caught.
+- A bullet that loses every citation keeps its text and is marked *uncited* rather
+  than deleted. Removing it would silently drop content the user can verify in the
+  transcript themselves.
+- Regenerating forks rather than overwrites (the G15 gate default), so a version
+  someone preferred survives a retry.
+- Both decision gates took their documented defaults: templates are prompt +
+  enforced JSON schema, and regenerate forks.
+- **G13 is partial and knowingly so.** The runtime *management* is done: it
+  detects whether `llama-server` and a model are present, refuses to start with a
+  clear reason when they are not, treats a truncated model as missing, and binds
+  the server to loopback. The automated download is not wired up, so G13's
+  done-when — "a user with no API key can summarise offline after one guided
+  download" — is **not** met. Until then the offline path requires Ollama, LM
+  Studio, or dropping the files in by hand.
 
 Phase 2 notes:
 - **G9 shipped without the Granola UI description** (the gate was never answered),

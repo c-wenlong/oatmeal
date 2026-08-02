@@ -273,6 +273,100 @@ pub fn delete_meeting(conn: &Connection, meeting_id: &str) -> Result<Option<Stri
     Ok(audio_path)
 }
 
+/// Ensures the built-in templates exist as rows.
+///
+/// `panels.template_id` is a foreign key, so a panel cannot reference a
+/// template that has no row. The prompt text stays authoritative in code and is
+/// refreshed here on every launch, so improving a built-in prompt does not
+/// require a migration — but user-defined templates still live in the same
+/// table and are never touched.
+pub fn ensure_builtin_templates(
+    conn: &Connection,
+    templates: &[(&str, &str, &str)],
+    now: i64,
+) -> Result<()> {
+    for (id, name, prompt) in templates {
+        conn.execute(
+            "INSERT INTO templates (id, name, prompt, is_builtin, created_at)
+             VALUES (?1, ?2, ?3, 1, ?4)
+             ON CONFLICT (id) DO UPDATE SET
+                 name = excluded.name,
+                 prompt = excluded.prompt
+             WHERE templates.is_builtin = 1",
+            params![id, name, prompt, now],
+        )?;
+    }
+    Ok(())
+}
+
+/// A generated view over a meeting. Regenerating adds a new one rather than
+/// replacing the old — per the G15 decision gate, edits are never destroyed.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Panel {
+    pub id: String,
+    pub template_id: Option<String>,
+    pub content_json: String,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub generated_at: i64,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_panel(
+    conn: &Connection,
+    id: &str,
+    meeting_id: &str,
+    template_id: &str,
+    content_json: &str,
+    plaintext: &str,
+    provider: &str,
+    model: &str,
+    generated_at: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO panels
+             (id, meeting_id, template_id, content_json, plaintext,
+              provider, model, generated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            id,
+            meeting_id,
+            template_id,
+            content_json,
+            plaintext,
+            provider,
+            model,
+            generated_at
+        ],
+    )?;
+    Ok(())
+}
+
+/// Panels for a meeting, newest first.
+pub fn meeting_panels(conn: &Connection, meeting_id: &str) -> Result<Vec<Panel>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, template_id, content_json, provider, model, generated_at
+         FROM panels WHERE meeting_id = ?1 ORDER BY generated_at DESC, rowid DESC",
+    )?;
+    let rows = stmt.query_map(params![meeting_id], |row| {
+        Ok(Panel {
+            id: row.get(0)?,
+            template_id: row.get(1)?,
+            content_json: row.get(2)?,
+            provider: row.get(3)?,
+            model: row.get(4)?,
+            generated_at: row.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+pub fn delete_panel(conn: &Connection, panel_id: &str) -> Result<()> {
+    conn.execute("DELETE FROM panels WHERE id = ?1", params![panel_id])?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Utterance {
@@ -555,7 +649,60 @@ mod tests {
     fn seeded_meeting() -> Database {
         let db = Database::open_in_memory().unwrap();
         insert_meeting(db.connection(), "m1", "Test", 0).unwrap();
+        ensure_builtin_templates(
+            db.connection(),
+            &[
+                ("default", "Summary", "prompt"),
+                ("one-on-one", "1:1", "prompt"),
+            ],
+            0,
+        )
+        .unwrap();
         db
+    }
+
+    #[test]
+    fn seeding_builtin_templates_is_idempotent() {
+        let db = Database::open_in_memory().unwrap();
+        let seed = |name: &str| {
+            ensure_builtin_templates(db.connection(), &[("default", name, "p")], 0).unwrap()
+        };
+        seed("Summary");
+        seed("Summary renamed");
+
+        let (count, name): (i64, String) = db
+            .connection()
+            .query_row(
+                "SELECT COUNT(*), MAX(name) FROM templates WHERE id = 'default'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "seeding duplicated a built-in");
+        // Code stays the source of truth for built-in prompts.
+        assert_eq!(name, "Summary renamed");
+    }
+
+    #[test]
+    fn seeding_never_overwrites_a_user_template() {
+        let db = Database::open_in_memory().unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO templates (id, name, prompt, is_builtin, created_at)
+                 VALUES (\'mine\', \'My template\', \'my prompt\', 0, 0)",
+                [],
+            )
+            .unwrap();
+
+        ensure_builtin_templates(db.connection(), &[("mine", "Hijacked", "other")], 0).unwrap();
+
+        let name: String = db
+            .connection()
+            .query_row("SELECT name FROM templates WHERE id = 'mine'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(name, "My template", "a user template was overwritten");
     }
 
     #[test]
@@ -740,6 +887,142 @@ mod tests {
         assert!(search_note_blocks(db.connection(), "migrate", 10)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn panels_come_back_newest_first() {
+        let db = seeded_meeting();
+        let conn = db.connection();
+        insert_panel(
+            conn, "p1", "m1", "default", "{}", "older", "Ollama", "llama", 1_000,
+        )
+        .unwrap();
+        insert_panel(
+            conn,
+            "p2",
+            "m1",
+            "one-on-one",
+            "{}",
+            "newer",
+            "Ollama",
+            "llama",
+            2_000,
+        )
+        .unwrap();
+
+        let panels = meeting_panels(conn, "m1").unwrap();
+        assert_eq!(panels[0].id, "p2");
+        assert_eq!(panels[1].id, "p1");
+    }
+
+    #[test]
+    fn regenerating_adds_a_panel_rather_than_replacing_one() {
+        // The decision-gate default: edits are never destroyed.
+        let db = seeded_meeting();
+        let conn = db.connection();
+        insert_panel(
+            conn, "p1", "m1", "default", "{}", "first", "Ollama", "l", 1_000,
+        )
+        .unwrap();
+        insert_panel(
+            conn, "p2", "m1", "default", "{}", "second", "Ollama", "l", 2_000,
+        )
+        .unwrap();
+        assert_eq!(meeting_panels(conn, "m1").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_panel_records_which_model_produced_it() {
+        // The privacy panel (G27) reports local-vs-cloud per generation, not
+        // per app, so this has to be stored with the panel itself.
+        let db = seeded_meeting();
+        insert_panel(
+            db.connection(),
+            "p1",
+            "m1",
+            "default",
+            "{}",
+            "text",
+            "Anthropic",
+            "claude-sonnet-5",
+            1_000,
+        )
+        .unwrap();
+
+        let panel = &meeting_panels(db.connection(), "m1").unwrap()[0];
+        assert_eq!(panel.provider.as_deref(), Some("Anthropic"));
+        assert_eq!(panel.model.as_deref(), Some("claude-sonnet-5"));
+    }
+
+    #[test]
+    fn deleting_a_panel_leaves_the_transcript_and_notes_alone() {
+        let mut db = seeded_meeting();
+        append_utterance(db.connection(), "m1", "mic", "said aloud", 0, 1, None).unwrap();
+        save_note_blocks(db.connection_mut(), "m1", &[block("b1", 0, "noted", 1_000)]).unwrap();
+        insert_panel(
+            db.connection(),
+            "p1",
+            "m1",
+            "default",
+            "{}",
+            "text",
+            "Ollama",
+            "l",
+            1_000,
+        )
+        .unwrap();
+
+        delete_panel(db.connection(), "p1").unwrap();
+
+        assert!(meeting_panels(db.connection(), "m1").unwrap().is_empty());
+        assert_eq!(meeting_utterances(db.connection(), "m1").unwrap().len(), 1);
+        assert_eq!(meeting_notes(db.connection(), "m1").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn panels_are_searchable_by_their_plaintext() {
+        let db = seeded_meeting();
+        insert_panel(
+            db.connection(),
+            "p1",
+            "m1",
+            "default",
+            "{}",
+            "deadline for the migration",
+            "Ollama",
+            "l",
+            1_000,
+        )
+        .unwrap();
+
+        let found: i64 = db
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM panels_fts WHERE panels_fts MATCH 'migrate'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(found, 1, "panel text is not reaching the FTS index");
+    }
+
+    #[test]
+    fn deleting_a_meeting_takes_its_panels() {
+        let db = seeded_meeting();
+        insert_panel(
+            db.connection(),
+            "p1",
+            "m1",
+            "default",
+            "{}",
+            "t",
+            "Ollama",
+            "l",
+            1_000,
+        )
+        .unwrap();
+        delete_meeting(db.connection(), "m1").unwrap();
+        assert!(meeting_panels(db.connection(), "m1").unwrap().is_empty());
     }
 
     #[test]

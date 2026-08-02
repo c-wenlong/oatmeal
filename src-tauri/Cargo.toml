@@ -24,12 +24,21 @@ rusqlite = { version = "0.40.1", features = ["bundled"] }
 sqlite-vec = "0.1.9"
 uuid = { version = "1.24.0", features = ["v4"] }
 thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
+# rustls rather than the system stack: one less moving part across macOS versions.
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
+# API keys live in the macOS Keychain, never in SQLite.
+keyring = { version = "3", features = ["apple-native"] }
 
 [dev-dependencies]
 # The `test` feature unlocks tauri::test, which drives commands through the real
 # IPC path against a mock runtime — no window, no display server.
 tauri = { version = "2", features = ["test"] }
 tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
 
 [profile.release]
 lto = true

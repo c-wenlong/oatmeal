@@ -1,5 +1,7 @@
 pub mod db;
+pub mod llm;
 pub mod meeting;
+pub mod panel;
 pub mod sidecar;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,6 +11,9 @@ use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use db::{repo, Database};
+use llm::keys::{KeyStore, Keychain};
+use llm::provider::{ProviderConfig, ProviderKind};
+use llm::LlmClient;
 use meeting::{MeetingEvent, MeetingState};
 use sidecar::{Supervisor, SupervisorEvent};
 
@@ -60,6 +65,13 @@ pub struct AppState {
     /// `meeting::next`, so illegal ones are refused rather than silently
     /// producing a half-state.
     pub meeting: Mutex<MeetingState>,
+    /// Chosen LLM provider. Holds no key — those live in the Keychain and are
+    /// fetched at request time.
+    pub provider: Mutex<ProviderConfig>,
+    pub keys: Box<dyn KeyStore>,
+    pub llm: LlmClient,
+    /// The `llama-server` Oatmeal can run itself, for the no-key offline path.
+    pub runtime: llm::bundled::Runtime,
     /// Last permission snapshot the sidecar reported.
     ///
     /// Cached because permissions arrive as a one-shot event: anything that
@@ -196,13 +208,13 @@ fn meeting_start(app: tauri::AppHandle, title: Option<String>) -> Result<String,
 }
 
 #[tauri::command]
-fn meeting_stop(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    {
-        let mut machine = state.meeting.lock().map_err(|_| "lock poisoned")?;
-        *machine =
-            meeting::next(&machine, MeetingEvent::StopRequested).map_err(|e| e.to_string())?;
-    }
+fn meeting_stop(app: tauri::AppHandle) -> Result<(), String> {
+    // Goes through `transition` so the frontend hears `processing`. Mutating the
+    // machine directly here left the UI showing "recording" until the sidecar
+    // confirmed, which hid the finalising step entirely.
+    transition(&app, MeetingEvent::StopRequested)?;
 
+    let state = app.state::<AppState>();
     let guard = state.sidecar.lock().map_err(|_| "sidecar lock poisoned")?;
     guard
         .as_ref()
@@ -455,9 +467,33 @@ fn spawn_sidecar(app: &tauri::AppHandle, autorun_session: bool) -> Result<String
                         }
                     }
                     std::thread::sleep(std::time::Duration::from_secs(seconds));
-                    let state = handle.state::<AppState>();
-                    if let Err(err) = meeting_stop(state) {
+                    let meeting_id = handle
+                        .state::<AppState>()
+                        .meeting
+                        .lock()
+                        .ok()
+                        .and_then(|m| m.active_meeting().map(str::to_string));
+
+                    if let Err(err) = meeting_stop(handle.clone()) {
                         eprintln!("harness: could not stop meeting: {err}");
+                    }
+
+                    if std::env::var("OATMEAL_HARNESS_GENERATE").as_deref() == Ok("1") {
+                        // Give the sidecar time to flush its last utterances.
+                        std::thread::sleep(std::time::Duration::from_secs(20));
+                        if let Some(id) = meeting_id {
+                            let handle = handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                match panel_generate(handle, id, "default".into()).await {
+                                    Ok(panel) => {
+                                        eprintln!("harness: generated panel {}", panel.id)
+                                    }
+                                    Err(err) => {
+                                        eprintln!("harness: panel generation failed: {err}")
+                                    }
+                                }
+                            });
+                        }
                     }
                 });
             }
@@ -493,6 +529,218 @@ fn sidecar_send(
         .ok_or_else(|| "sidecar is not running".to_string())?
         .send(&command)
         .map_err(|e| e.to_string())
+}
+
+// ------------------------------------------------------------------ providers
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderInfo {
+    pub kind: ProviderKind,
+    pub label: String,
+    pub default_base_url: String,
+    pub default_model: String,
+    pub requires_key: bool,
+    pub is_local: bool,
+    /// Whether a key is already stored. Never the key itself.
+    pub has_key: bool,
+}
+
+#[tauri::command]
+fn providers_list(state: tauri::State<'_, AppState>) -> Vec<ProviderInfo> {
+    ProviderKind::all()
+        .iter()
+        .map(|kind| ProviderInfo {
+            kind: *kind,
+            label: kind.label().to_string(),
+            default_base_url: kind.default_base_url().to_string(),
+            default_model: kind.default_model().to_string(),
+            requires_key: kind.requires_key(),
+            is_local: kind.is_local(),
+            has_key: ProviderConfig::preset(*kind)
+                .keychain_ref
+                .map(|r| state.keys.has(&r))
+                .unwrap_or(false),
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn provider_current(state: tauri::State<'_, AppState>) -> Result<ProviderConfig, String> {
+    Ok(state.provider.lock().map_err(|_| "lock poisoned")?.clone())
+}
+
+#[tauri::command]
+fn provider_select(
+    kind: ProviderKind,
+    model: Option<String>,
+    base_url: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<ProviderConfig, String> {
+    let mut config = ProviderConfig::preset(kind);
+    if let Some(model) = model.filter(|m| !m.trim().is_empty()) {
+        config.model = model.trim().to_string();
+    }
+    if let Some(url) = base_url.filter(|u| !u.trim().is_empty()) {
+        config.base_url = url.trim().to_string();
+    }
+    *state.provider.lock().map_err(|_| "lock poisoned")? = config.clone();
+    Ok(config)
+}
+
+/// Stores an API key in the Keychain. The key is never returned, logged, or
+/// written to the database.
+#[tauri::command]
+fn provider_set_key(
+    kind: ProviderKind,
+    key: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let reference = ProviderConfig::preset(kind)
+        .keychain_ref
+        .ok_or_else(|| format!("{} does not use an API key", kind.label()))?;
+
+    if key.trim().is_empty() {
+        return state.keys.delete(&reference).map_err(|e| e.to_string());
+    }
+    state
+        .keys
+        .set(&reference, key.trim())
+        .map_err(|e| e.to_string())
+}
+
+/// Round-trips a tiny prompt so a misconfiguration surfaces here rather than
+/// when someone is waiting on a summary.
+#[tauri::command]
+async fn provider_test(app: tauri::AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    let config = state.provider.lock().map_err(|_| "lock poisoned")?.clone();
+
+    let request = llm::provider::ChatRequest::new(vec![llm::provider::Message::user(
+        "Reply with the single word: ready",
+    )]);
+
+    let reply = state
+        .llm
+        .chat(&config, &request, state.keys.as_ref())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(reply.trim().chars().take(120).collect())
+}
+
+/// State of the local model runtime.
+#[tauri::command]
+fn runtime_state(state: tauri::State<'_, AppState>) -> llm::bundled::RuntimeState {
+    state.runtime.state()
+}
+
+#[tauri::command]
+fn runtime_models() -> Vec<llm::bundled::ModelOption> {
+    llm::bundled::model_options()
+}
+
+/// Starts the local model server, so the fully-offline path needs no terminal.
+#[tauri::command]
+fn runtime_start(state: tauri::State<'_, AppState>) -> Result<u32, String> {
+    state.runtime.start()
+}
+
+#[tauri::command]
+fn runtime_stop(state: tauri::State<'_, AppState>) {
+    state.runtime.stop();
+}
+
+// -------------------------------------------------------------------- panels
+
+#[tauri::command]
+fn templates_list() -> Vec<panel::Template> {
+    panel::prompt::builtin_templates()
+}
+
+#[tauri::command]
+fn panels_list(
+    meeting_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<repo::Panel>, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::meeting_panels(db.connection(), &meeting_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn panel_delete(panel_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::delete_panel(db.connection(), &panel_id).map_err(|e| e.to_string())
+}
+
+/// Generates a panel and stores it.
+///
+/// Always inserts a new row: regenerating forks rather than overwrites, so an
+/// earlier panel the user liked is never destroyed by a retry.
+#[tauri::command]
+async fn panel_generate(
+    app: tauri::AppHandle,
+    meeting_id: String,
+    template_id: String,
+) -> Result<repo::Panel, String> {
+    let state = app.state::<AppState>();
+
+    let template = panel::prompt::builtin_templates()
+        .into_iter()
+        .find(|t| t.id == template_id)
+        .ok_or_else(|| format!("no such template: {template_id}"))?;
+
+    let (utterances, notes, config) = {
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        let utterances =
+            repo::meeting_utterances(db.connection(), &meeting_id).map_err(|e| e.to_string())?;
+        let notes = repo::meeting_notes(db.connection(), &meeting_id).map_err(|e| e.to_string())?;
+        let config = state.provider.lock().map_err(|_| "lock poisoned")?.clone();
+        (utterances, notes, config)
+    };
+
+    let generated = panel::generate(
+        &state.llm,
+        &config,
+        state.keys.as_ref(),
+        &template,
+        &utterances,
+        &notes,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let id = format!("p{}", now_ms());
+    let content_json = serde_json::to_string(&generated.content).map_err(|e| e.to_string())?;
+
+    {
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        repo::insert_panel(
+            db.connection(),
+            &id,
+            &meeting_id,
+            &template.id,
+            &content_json,
+            &generated.content.plaintext(),
+            &generated.provider,
+            &generated.model,
+            now_ms(),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    if generated.report.had_hallucinations() {
+        eprintln!(
+            "panel {id}: dropped {} invented utterance citations and {} note citations",
+            generated.report.dropped_utterances, generated.report.dropped_notes
+        );
+    }
+
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::meeting_panels(db.connection(), &meeting_id)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| "panel vanished after insert".to_string())
 }
 
 /// Which System Settings privacy pane to open. Mirrored by `PrivacyPane` in
@@ -645,11 +893,34 @@ pub fn run() {
                 Ok(n) => eprintln!("recovered {n} interrupted meeting(s)"),
                 Err(err) => eprintln!("meeting recovery failed: {err}"),
             }
+            let builtins = panel::prompt::builtin_templates();
+            let rows: Vec<(&str, &str, &str)> = builtins
+                .iter()
+                .map(|t| (t.id.as_str(), t.name.as_str(), t.prompt.as_str()))
+                .collect();
+            if let Err(err) = repo::ensure_builtin_templates(db.connection(), &rows, now_ms()) {
+                eprintln!("could not seed templates: {err}");
+            }
+
             app.manage(AppState {
                 db: Mutex::new(db),
                 db_path: path.to_string_lossy().into_owned(),
                 sidecar: Mutex::new(None),
                 meeting: Mutex::new(MeetingState::default()),
+                provider: Mutex::new({
+                    let mut config = ProviderConfig::preset(ProviderKind::Ollama);
+                    // Dev override: point at whatever model is actually pulled
+                    // locally without editing the preset.
+                    if let Ok(model) = std::env::var("OATMEAL_PROVIDER_MODEL") {
+                        if !model.trim().is_empty() {
+                            config.model = model;
+                        }
+                    }
+                    config
+                }),
+                keys: Box::new(Keychain),
+                llm: LlmClient::new(),
+                runtime: llm::bundled::Runtime::new(&dir),
                 last_permissions: Mutex::new(None),
             });
 
@@ -684,7 +955,20 @@ pub fn run() {
             notes_load,
             meeting_state,
             meeting_rename,
-            meeting_delete
+            meeting_delete,
+            providers_list,
+            provider_current,
+            provider_select,
+            provider_set_key,
+            provider_test,
+            templates_list,
+            panels_list,
+            panel_delete,
+            panel_generate,
+            runtime_state,
+            runtime_models,
+            runtime_start,
+            runtime_stop
         ])
         .run(app_context())
         .expect("error while running tauri application");

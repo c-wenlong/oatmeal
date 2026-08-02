@@ -20,9 +20,12 @@ import type {
   Utterance,
 } from "../types";
 import { Notepad } from "./Notepad";
+import { PanelView } from "./PanelView";
 
 interface Line {
   key: string;
+  /** Present on stored lines so a citation chip can find them. */
+  utteranceId?: number;
   source: AudioSource;
   text: string;
   startMs: number;
@@ -91,6 +94,25 @@ export function RecordCard() {
   // against transcript times measured from a different origin.
   const recordingStartedAt = useRef<number | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(true);
+  const [highlighted, setHighlighted] = useState<number | null>(null);
+
+  /**
+   * Scrolls the transcript to a cited line and flashes it.
+   *
+   * A citation that cannot be followed is worse than none — it looks like
+   * evidence. Opening the transcript first means the chip works even when the
+   * pane is collapsed.
+   */
+  const revealUtterance = useCallback((utteranceId: number) => {
+    setTranscriptOpen(true);
+    setHighlighted(utteranceId);
+    // After the pane has had a frame to render.
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-utterance-id="${utteranceId}"]`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  }, []);
 
   const elapsedMs = useCallback(
     () =>
@@ -292,6 +314,7 @@ export function RecordCard() {
       setLines(
         utterances.map((u) => ({
           key: `stored-${u.id}`,
+          utteranceId: u.id,
           source: u.source,
           text: u.text,
           startMs: u.startMs,
@@ -352,6 +375,8 @@ export function RecordCard() {
       )}
       {message && <p className="empty-note">{message}</p>}
 
+      <PanelView meetingId={viewing ?? active} onCitationClick={revealUtterance} />
+
       <div className="meeting-body">
         <Notepad meetingId={viewing ?? active} elapsedMs={elapsedMs} />
 
@@ -371,7 +396,15 @@ export function RecordCard() {
           {transcriptOpen && (
             <div className="log" ref={transcriptRef} data-testid="transcript">
               {lines.map((line) => (
-                <div className="log-line" key={line.key}>
+                <div
+                  className={
+                    line.utteranceId !== undefined && line.utteranceId === highlighted
+                      ? "log-line transcript-line--highlight"
+                      : "log-line"
+                  }
+                  key={line.key}
+                  data-utterance-id={line.utteranceId}
+                >
                   <span className="log-time">{timecode(line.startMs)}</span>
                   <span className={`log-tag log-tag--${line.source}`}>
                     {speaker(line.source)}

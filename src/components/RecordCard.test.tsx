@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RecordCard } from "./RecordCard";
 import {
+  panelsList,
+  templatesList,
   meetingDelete,
   meetingRename,
   meetingState,
@@ -33,9 +35,14 @@ vi.mock("../lib/tauri", () => ({
   meetingDelete: vi.fn(),
   meetingsList: vi.fn(),
   meetingTranscript: vi.fn(),
-  // The Notepad child reaches for these through the same module boundary.
+  // The Notepad and PanelView children reach for these through the same
+  // module boundary.
   notesLoad: vi.fn(),
   notesSave: vi.fn(),
+  templatesList: vi.fn(),
+  panelsList: vi.fn(),
+  panelGenerate: vi.fn(),
+  panelDelete: vi.fn(),
 }));
 
 const mockOn = vi.mocked(onSidecarEvent);
@@ -50,6 +57,8 @@ const mockList = vi.mocked(meetingsList);
 const mockTranscript = vi.mocked(meetingTranscript);
 const mockNotesLoad = vi.mocked(notesLoad);
 const mockNotesSave = vi.mocked(notesSave);
+const mockPanels = vi.mocked(panelsList);
+const mockTemplateList = vi.mocked(templatesList);
 
 let subscriber: (event: SupervisorEvent) => void;
 let meetingStateSubscriber: (state: MeetingStateT) => void;
@@ -81,6 +90,8 @@ beforeEach(() => {
     mockTranscript,
     mockNotesLoad,
     mockNotesSave,
+    mockPanels,
+    mockTemplateList,
   ]) {
     m.mockReset();
   }
@@ -102,6 +113,8 @@ beforeEach(() => {
   mockTranscript.mockResolvedValue([]);
   mockNotesLoad.mockResolvedValue([]);
   mockNotesSave.mockResolvedValue(undefined);
+  mockPanels.mockResolvedValue([]);
+  mockTemplateList.mockResolvedValue([]);
 });
 
 describe("RecordCard", () => {

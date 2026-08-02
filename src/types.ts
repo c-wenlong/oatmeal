@@ -126,3 +126,70 @@ export type MeetingState =
   | { state: "recording"; meeting_id: string }
   /** Stop requested; the sidecar has not finalised the file yet. */
   | { state: "processing"; meeting_id: string };
+
+/** Mirrors `ProviderKind` in src-tauri/src/llm/provider.rs. */
+export type ProviderKind =
+  "anthropic" | "openai" | "openrouter" | "ollama" | "lmstudio" | "bundled";
+
+/** Mirrors `ProviderInfo` in src-tauri/src/lib.rs. */
+export interface ProviderInfo {
+  kind: ProviderKind;
+  label: string;
+  defaultBaseUrl: string;
+  defaultModel: string;
+  requiresKey: boolean;
+  isLocal: boolean;
+  /** Whether a key is stored. Never the key itself. */
+  hasKey: boolean;
+}
+
+/** Mirrors `ProviderConfig` in src-tauri/src/llm/provider.rs. */
+export interface ProviderConfig {
+  id: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  model: string;
+  keychainRef: string | null;
+}
+
+/** Mirrors `Template` in src-tauri/src/panel/prompt.rs. */
+export interface Template {
+  id: string;
+  name: string;
+  prompt: string;
+  isBuiltin: boolean;
+}
+
+/** Mirrors `Bullet` in src-tauri/src/panel/content.rs. */
+export interface Bullet {
+  text: string;
+  /** Transcript line ids. Empty means the claim could not be traced. */
+  sourceUtterances: number[];
+  fromNote: string | null;
+}
+
+export interface PanelSection {
+  heading: string;
+  bullets: Bullet[];
+}
+
+export interface PanelContent {
+  sections: PanelSection[];
+}
+
+/** Mirrors `Panel` in src-tauri/src/db/repo.rs. */
+export interface Panel {
+  id: string;
+  templateId: string | null;
+  contentJson: string;
+  provider: string | null;
+  model: string | null;
+  generatedAt: number;
+}
+
+/** Mirrors `RuntimeState` in src-tauri/src/llm/bundled.rs. */
+export type RuntimeState =
+  | { state: "not_installed" }
+  | { state: "needs_model" }
+  | { state: "ready" }
+  | { state: "running"; pid: number };

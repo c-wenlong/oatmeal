@@ -8,6 +8,12 @@ import type {
   PrivacyPane,
   SidecarCommand,
   NoteBlock,
+  Panel,
+  ProviderConfig,
+  ProviderInfo,
+  ProviderKind,
+  RuntimeState,
+  Template,
   SupervisorEvent,
   Utterance,
 } from "../types";
@@ -121,4 +127,61 @@ export function onMeetingState(
   handler: (state: MeetingState) => void,
 ): Promise<UnlistenFn> {
   return listen<MeetingState>(MEETING_STATE_EVENT, (e) => handler(e.payload));
+}
+
+export function providersList(): Promise<ProviderInfo[]> {
+  return invoke<ProviderInfo[]>("providers_list");
+}
+
+export function providerCurrent(): Promise<ProviderConfig> {
+  return invoke<ProviderConfig>("provider_current");
+}
+
+export function providerSelect(
+  kind: ProviderKind,
+  model?: string,
+  baseUrl?: string,
+): Promise<ProviderConfig> {
+  return invoke<ProviderConfig>("provider_select", {
+    kind,
+    model: model ?? null,
+    baseUrl: baseUrl ?? null,
+  });
+}
+
+/** Stores a key in the Keychain. It is never read back into the frontend. */
+export function providerSetKey(kind: ProviderKind, key: string): Promise<void> {
+  return invoke<void>("provider_set_key", { kind, key });
+}
+
+export function providerTest(): Promise<string> {
+  return invoke<string>("provider_test");
+}
+
+export function templatesList(): Promise<Template[]> {
+  return invoke<Template[]>("templates_list");
+}
+
+export function panelsList(meetingId: string): Promise<Panel[]> {
+  return invoke<Panel[]>("panels_list", { meetingId });
+}
+
+export function panelGenerate(meetingId: string, templateId: string): Promise<Panel> {
+  return invoke<Panel>("panel_generate", { meetingId, templateId });
+}
+
+export function panelDelete(panelId: string): Promise<void> {
+  return invoke<void>("panel_delete", { panelId });
+}
+
+export function runtimeState(): Promise<RuntimeState> {
+  return invoke<RuntimeState>("runtime_state");
+}
+
+export function runtimeStart(): Promise<number> {
+  return invoke<number>("runtime_start");
+}
+
+export function runtimeStop(): Promise<void> {
+  return invoke<void>("runtime_stop");
 }

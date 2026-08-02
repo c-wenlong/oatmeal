@@ -556,3 +556,158 @@ button.primary:hover:not(:disabled) {
   gap: 2px;
   flex-shrink: 0;
 }
+
+/* ------------------------------------------------------- panels (SPEC §9.3) */
+
+.panel-view {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 12px 14px;
+  margin-top: 16px;
+  min-width: 0;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+select {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.panel-versions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.panel-version {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.panel-version--open {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.panel-version-when {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.panel-section h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 12px 0 6px;
+  letter-spacing: -0.01em;
+}
+
+.panel-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.bullet {
+  font-size: 13.5px;
+  line-height: 1.6;
+  margin-bottom: 6px;
+}
+
+/* Bullets the user's own notes drove get a marker — that connection is the
+   whole point of feeding notes to the summariser. */
+.bullet--from-note {
+  list-style: none;
+  margin-left: -18px;
+  padding-left: 12px;
+  border-left: 2px solid var(--accent);
+}
+
+.bullet-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.citation {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 1px 6px;
+  margin-left: 4px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+  vertical-align: 1px;
+}
+
+.citation:hover {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  border-color: var(--ok);
+}
+
+/* An uncited bullet must not read as equally sourced. */
+.citation--none {
+  color: var(--muted);
+  border-color: var(--border);
+  border-style: dashed;
+  background: none;
+  cursor: default;
+}
+
+.panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.transcript-line--highlight {
+  background: var(--accent-soft);
+  border-radius: 4px;
+}
+
+input {
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  min-width: 220px;
+  flex: 1;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
