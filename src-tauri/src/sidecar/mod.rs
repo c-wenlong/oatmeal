@@ -10,6 +10,7 @@ pub mod protocol;
 pub mod supervisor;
 
 pub use protocol::{
-    AudioSource, ModelState, PermissionState, SidecarCommand, SidecarEvent, PROTOCOL_VERSION,
+    AudioSource, MicApp, ModelState, PermissionState, SidecarCommand, SidecarEvent,
+    PROTOCOL_VERSION,
 };
 pub use supervisor::{resolve_binary, SidecarError, Supervisor, SupervisorEvent};

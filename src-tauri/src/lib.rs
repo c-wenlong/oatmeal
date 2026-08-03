@@ -1,15 +1,18 @@
 pub mod db;
+pub mod detect;
 pub mod embed;
 pub mod link;
 pub mod llm;
 pub mod meeting;
 pub mod panel;
 pub mod sidecar;
+pub mod tray;
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
 use db::{repo, Database};
@@ -79,6 +82,22 @@ pub struct AppState {
     pub http: reqwest::Client,
     /// Set to ask an in-flight download to stop. Reset when one starts.
     pub cancel_download: Arc<AtomicBool>,
+    /// Wall clock at which the current recording began, for the menu bar timer.
+    /// `None` whenever nothing is being recorded.
+    pub recording_since: Mutex<Option<i64>>,
+    /// Candidates waiting to be offered (G22).
+    pub candidates: Mutex<detect::Queue>,
+    /// Calendar events already offered, so a five-minute poll does not re-raise
+    /// a meeting the user has dismissed.
+    pub offered_events: Mutex<Vec<String>>,
+    /// An app awaiting its one-time "always or never" answer.
+    ///
+    /// Held rather than only emitted, for the same reason permissions are
+    /// cached: the popup window is created *by* the same code that raises the
+    /// question, so it cannot possibly be listening yet. An event alone would
+    /// arrive before anything was there to hear it, and the window would open
+    /// blank.
+    pub pending_question: Mutex<Option<AppQuestion>>,
     /// Last permission snapshot the sidecar reported.
     ///
     /// Cached because permissions arrive as a one-shot event: anything that
@@ -379,8 +398,555 @@ fn transition(app: &tauri::AppHandle, event: MeetingEvent) -> Result<MeetingStat
     *machine = next_state.clone();
     drop(machine);
 
+    // The tray mirrors the machine rather than the record button, for the same
+    // reason the frontend does: a meeting can start from the hotkey, the menu,
+    // or detection, and a menu bar that only knows about one of them lies.
+    if let Ok(mut since) = state.recording_since.lock() {
+        *since = match (next_state.is_recording(), *since) {
+            (true, Some(started)) => Some(started),
+            (true, None) => Some(now_ms()),
+            (false, _) => None,
+        };
+    }
+    refresh_tray(app);
+
     let _ = app.emit(MEETING_STATE_EVENT, &next_state);
     Ok(next_state)
+}
+
+/// The global start/stop shortcut: ⌃⌥⌘R.
+///
+/// Three modifiers on purpose. This is registered system-wide, so it takes the
+/// key away from every other app — a two-modifier combination would eventually
+/// shadow something the user cares about more than this.
+pub fn record_shortcut() -> tauri_plugin_global_shortcut::Shortcut {
+    use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
+    Shortcut::new(
+        Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER),
+        Code::KeyR,
+    )
+}
+
+// ---------------------------------------------------------------- detection
+
+/// An app waiting on its one-time answer. Mirrored by `AppQuestion` in
+/// `src/types.ts`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppQuestion {
+    pub bundle_id: String,
+    pub app_name: Option<String>,
+}
+
+/// Settings keys. Strings because `settings` is a key/value table; collected
+/// here so a typo is a compile error at one site rather than a silent default.
+pub const SETTING_LEAD_MS: &str = "detect.lead_ms";
+pub const SETTING_MIC_ENABLED: &str = "detect.mic_enabled";
+pub const SETTING_CALENDAR_ENABLED: &str = "detect.calendar_enabled";
+
+/// Detection settings as the UI sees them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectionSettings {
+    /// How long before a calendar event to offer. Default 90s, per SPEC.
+    pub lead_ms: i64,
+    pub mic_enabled: bool,
+    pub calendar_enabled: bool,
+}
+
+impl Default for DetectionSettings {
+    fn default() -> Self {
+        Self {
+            lead_ms: 90_000,
+            // Both off until the user opts in. Detection watches what other
+            // apps are doing and reads the calendar; neither should start
+            // happening because the app was launched.
+            mic_enabled: false,
+            calendar_enabled: false,
+        }
+    }
+}
+
+pub fn load_settings(conn: &rusqlite::Connection) -> DetectionSettings {
+    let defaults = DetectionSettings::default();
+    let read = |key: &str| repo::get_setting(conn, key).ok().flatten();
+    DetectionSettings {
+        lead_ms: read(SETTING_LEAD_MS)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(defaults.lead_ms),
+        mic_enabled: read(SETTING_MIC_ENABLED)
+            .map(|v| v == "1")
+            .unwrap_or(defaults.mic_enabled),
+        calendar_enabled: read(SETTING_CALENDAR_ENABLED)
+            .map(|v| v == "1")
+            .unwrap_or(defaults.calendar_enabled),
+    }
+}
+
+/// The user's stored per-app rules, keyed by bundle id.
+fn stored_rules(conn: &rusqlite::Connection) -> HashMap<String, detect::RuleMode> {
+    repo::detection_rules(conn)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|rule| detect::RuleMode::parse(&rule.mode).map(|mode| (rule.bundle_id, mode)))
+        .collect()
+}
+
+/// An app started using the microphone.
+fn on_mic_started(app: &tauri::AppHandle, apps: &[sidecar::MicApp]) {
+    let state = app.state::<AppState>();
+
+    // Never offer while already recording. The user is in a meeting; a popup
+    // asking whether they would like to record one is noise at best.
+    if state
+        .meeting
+        .lock()
+        .map(|m| m.is_capturing())
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    let Ok(db) = state.db.lock() else { return };
+    let settings = load_settings(db.connection());
+    if !settings.mic_enabled {
+        return;
+    }
+    let rules = stored_rules(db.connection());
+    drop(db);
+
+    for mic_app in apps {
+        let Some(bundle_id) = mic_app.bundle_id.as_deref() else {
+            continue;
+        };
+        match detect::rules::decide(bundle_id, &rules) {
+            detect::Decision::Ignore => {}
+            detect::Decision::Ask => {
+                // One question, then remembered forever. Asked through the same
+                // popup so there is only ever one kind of interruption.
+                let question = AppQuestion {
+                    bundle_id: bundle_id.to_string(),
+                    app_name: mic_app.name.clone(),
+                };
+                if let Ok(mut pending) = state.pending_question.lock() {
+                    *pending = Some(question.clone());
+                }
+                // Stored first, then announced, then the window is opened. The
+                // window cannot be listening yet, so it reads the stored value
+                // on mount; the event is only for a window already open.
+                let _ = app.emit("detect://ask", &question);
+                show_popup(app);
+            }
+            detect::Decision::Offer => {
+                let candidate = detect::Candidate {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    source: detect::Source::Mic,
+                    title: None,
+                    bundle_id: Some(bundle_id.to_string()),
+                    app_name: mic_app.name.clone(),
+                    calendar_event_id: None,
+                    at_ms: now_ms(),
+                };
+                offer_candidate(app, candidate);
+            }
+        }
+    }
+}
+
+/// The calendar reported its upcoming window.
+fn on_calendar_events(app: &tauri::AppHandle, events: &[detect::CalendarEvent]) {
+    let state = app.state::<AppState>();
+    if state
+        .meeting
+        .lock()
+        .map(|m| m.is_capturing())
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    let Ok(db) = state.db.lock() else { return };
+    let settings = load_settings(db.connection());
+    drop(db);
+    if !settings.calendar_enabled {
+        return;
+    }
+
+    let already = state
+        .offered_events
+        .lock()
+        .map(|o| o.clone())
+        .unwrap_or_default();
+    let due = detect::calendar::due(events, now_ms(), settings.lead_ms, &already);
+
+    for event in due {
+        if let Ok(mut offered) = state.offered_events.lock() {
+            offered.push(event.id.clone());
+        }
+        offer_candidate(
+            app,
+            detect::Candidate {
+                id: uuid::Uuid::new_v4().to_string(),
+                source: detect::Source::Calendar,
+                title: event.title.clone(),
+                bundle_id: None,
+                app_name: None,
+                calendar_event_id: Some(event.id.clone()),
+                at_ms: now_ms(),
+            },
+        );
+    }
+}
+
+/// Queues a candidate and shows the popup.
+///
+/// Dedup happens in the queue, so a calendar event and a mic activation for the
+/// same call raise the popup once with the better-informed of the two.
+fn offer_candidate(app: &tauri::AppHandle, candidate: detect::Candidate) {
+    let state = app.state::<AppState>();
+    let Ok(mut queue) = state.candidates.lock() else {
+        return;
+    };
+    queue.offer(candidate);
+    let pending = queue.pending().to_vec();
+    drop(queue);
+
+    let _ = app.emit("detect://candidates", &pending);
+    show_popup(app);
+}
+
+/// The floating offer window.
+///
+/// A separate always-on-top window rather than something inside the main one:
+/// the whole point is to be seen while the user is in a video call, looking at
+/// anything but Oatmeal.
+pub fn show_popup(app: &tauri::AppHandle) {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    if let Some(existing) = app.get_webview_window("popup") {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return;
+    }
+
+    let built = WebviewWindowBuilder::new(app, "popup", WebviewUrl::App("index.html".into()))
+        .title("Oatmeal")
+        .inner_size(360.0, 190.0)
+        .resizable(false)
+        .always_on_top(true)
+        // No traffic lights: this is a transient offer, and a close button
+        // invites dismissing it in a way that records no decision.
+        .decorations(false)
+        .skip_taskbar(true)
+        .focused(false)
+        .build();
+
+    if let Err(err) = built {
+        eprintln!("could not show the detection popup: {err}");
+    }
+}
+
+pub fn hide_popup(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("popup") {
+        let _ = window.close();
+    }
+}
+
+/// Applies the user's answer to an offer.
+#[tauri::command]
+fn detection_respond(
+    app: tauri::AppHandle,
+    candidate_id: String,
+    outcome: detect::Outcome,
+) -> Result<Option<String>, String> {
+    let state = app.state::<AppState>();
+    let candidate = state
+        .candidates
+        .lock()
+        .map_err(|_| "candidate lock poisoned")?
+        .resolve(&candidate_id);
+
+    let Some(candidate) = candidate else {
+        // Already answered, or expired. Not an error: two clicks on a popup
+        // that was closing is an ordinary race.
+        hide_popup(&app);
+        return Ok(None);
+    };
+
+    match outcome {
+        detect::Outcome::Start => {
+            hide_popup(&app);
+            let id = meeting_start(app.clone(), candidate.title.clone())?;
+            return Ok(Some(id));
+        }
+        detect::Outcome::IgnoreApp => {
+            // "Never ask about this app again" — the permanent half of the
+            // one-time question.
+            if let Some(bundle_id) = &candidate.bundle_id {
+                let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+                repo::set_detection_rule(
+                    db.connection(),
+                    bundle_id,
+                    candidate.app_name.as_deref(),
+                    detect::RuleMode::Ignore.as_str(),
+                    now_ms(),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        detect::Outcome::Ignore | detect::Outcome::Expired => {}
+    }
+
+    let remaining = state
+        .candidates
+        .lock()
+        .map(|q| q.pending().to_vec())
+        .unwrap_or_default();
+    let _ = app.emit("detect://candidates", &remaining);
+    if remaining.is_empty() {
+        hide_popup(&app);
+    }
+    Ok(None)
+}
+
+/// Records the answer to "should this app be allowed to offer?".
+#[tauri::command]
+fn detection_answer_app(
+    app: tauri::AppHandle,
+    bundle_id: String,
+    app_name: Option<String>,
+    allow: bool,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::set_detection_rule(
+        db.connection(),
+        &bundle_id,
+        app_name.as_deref(),
+        if allow {
+            detect::RuleMode::Allow.as_str()
+        } else {
+            detect::RuleMode::Ignore.as_str()
+        },
+        now_ms(),
+    )
+    .map_err(|e| e.to_string())?;
+    drop(db);
+
+    if let Ok(mut pending) = state.pending_question.lock() {
+        *pending = None;
+    }
+    hide_popup(&app);
+    Ok(())
+}
+
+/// The app awaiting an answer, if any. Read by the popup on mount.
+#[tauri::command]
+fn detection_pending_question(state: tauri::State<'_, AppState>) -> Option<AppQuestion> {
+    state.pending_question.lock().ok().and_then(|q| q.clone())
+}
+
+#[tauri::command]
+fn detection_candidates(state: tauri::State<'_, AppState>) -> Vec<detect::Candidate> {
+    state
+        .candidates
+        .lock()
+        .map(|q| q.pending().to_vec())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn detection_settings(state: tauri::State<'_, AppState>) -> Result<DetectionSettings, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    Ok(load_settings(db.connection()))
+}
+
+/// Stores settings and starts or stops the watchers to match.
+#[tauri::command]
+fn detection_set_settings(
+    app: tauri::AppHandle,
+    settings: DetectionSettings,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    {
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        let conn = db.connection();
+        let write = |key: &str, value: String| {
+            let _ = repo::set_setting(conn, key, &value);
+        };
+        write(SETTING_LEAD_MS, settings.lead_ms.to_string());
+        write(
+            SETTING_MIC_ENABLED,
+            if settings.mic_enabled { "1" } else { "0" }.into(),
+        );
+        write(
+            SETTING_CALENDAR_ENABLED,
+            if settings.calendar_enabled { "1" } else { "0" }.into(),
+        );
+    }
+
+    apply_detection_settings(&app, &settings);
+    Ok(())
+}
+
+/// Tells the sidecar which watchers should be running.
+///
+/// A no-op when the sidecar is not up — the settings are stored either way, and
+/// they are re-applied on the next spawn.
+pub fn apply_detection_settings(app: &tauri::AppHandle, settings: &DetectionSettings) {
+    let state = app.state::<AppState>();
+    let Ok(guard) = state.sidecar.lock() else {
+        return;
+    };
+    let Some(supervisor) = guard.as_ref() else {
+        return;
+    };
+    let _ = supervisor.send(&sidecar::SidecarCommand::WatchMic {
+        enabled: settings.mic_enabled,
+    });
+    let _ = supervisor.send(&sidecar::SidecarCommand::WatchCalendar {
+        enabled: settings.calendar_enabled,
+        // Requesting access is a user-visible prompt, so it only happens when
+        // they have just switched the calendar on.
+        request: settings.calendar_enabled,
+    });
+
+    if !settings.mic_enabled && !settings.calendar_enabled {
+        // Nothing may surface from a queue built under the old settings.
+        if let Ok(mut queue) = state.candidates.lock() {
+            queue.clear();
+        }
+    }
+}
+
+#[tauri::command]
+fn detection_rules_list(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<repo::DetectionRule>, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::detection_rules(db.connection()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn detection_rule_clear(
+    state: tauri::State<'_, AppState>,
+    bundle_id: String,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::clear_detection_rule(db.connection(), &bundle_id).map_err(|e| e.to_string())
+}
+
+/// The shipped allowlist, so settings can show what is on by default.
+#[tauri::command]
+fn detection_builtin_apps() -> Vec<(String, String)> {
+    detect::rules::BUILTIN_ALLOW
+        .iter()
+        .map(|(id, name)| ((*id).to_string(), (*name).to_string()))
+        .collect()
+}
+
+// ----------------------------------------------------------------- menu bar
+
+/// Rebuilds the tray menu, title and tooltip from current state.
+pub fn refresh_tray(app: &tauri::AppHandle) {
+    use tauri::tray::TrayIconId;
+
+    let Some(icon) = app.tray_by_id(&TrayIconId::new("oatmeal")) else {
+        return;
+    };
+    let state = app.state::<AppState>();
+
+    let (recording, processing) = match state.meeting.lock() {
+        Ok(machine) => (
+            machine.is_recording(),
+            machine.is_capturing() && !machine.is_recording(),
+        ),
+        Err(_) => (false, false),
+    };
+    let elapsed = state
+        .recording_since
+        .lock()
+        .ok()
+        .and_then(|since| *since)
+        .map(|started| now_ms() - started)
+        .unwrap_or(0);
+
+    let recent: Vec<tray::RecentEntry> = state
+        .db
+        .lock()
+        .ok()
+        .and_then(|db| repo::list_meetings(db.connection(), tray::RECENT_LIMIT).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|meeting| tray::RecentEntry {
+            label: tray::menu_label(meeting.title.as_deref().unwrap_or_default(), 34),
+            id: meeting.id,
+        })
+        .collect();
+
+    if let Ok(menu) = tray::build_menu(app, recording, &recent) {
+        let _ = icon.set_menu(Some(menu));
+    }
+    let _ = icon.set_title(Some(tray::tray_title(recording, elapsed)));
+    let _ = icon.set_tooltip(Some(tray::tray_tooltip(recording, processing)));
+}
+
+/// Runs a tray menu choice.
+pub fn on_tray_action(app: &tauri::AppHandle, action: tray::TrayAction) {
+    match action {
+        tray::TrayAction::StartRecording => {
+            if let Err(err) = meeting_start(app.clone(), None) {
+                eprintln!("tray could not start a recording: {err}");
+            }
+        }
+        tray::TrayAction::StopRecording => {
+            if let Err(err) = meeting_stop(app.clone()) {
+                eprintln!("tray could not stop the recording: {err}");
+            }
+        }
+        tray::TrayAction::OpenWindow => tray::focus_main(app),
+        tray::TrayAction::OpenMeeting(id) => {
+            // The window has to be up before the event fires, or a hidden
+            // window misses it and opens on the wrong meeting.
+            tray::focus_main(app);
+            let _ = app.emit("meeting://open", id);
+        }
+        tray::TrayAction::Quit => {
+            // Stop cleanly rather than exiting under a live recording: the
+            // sidecar owns an unfinalised audio file, and killing the process
+            // leaves it unreadable.
+            let recording = app
+                .state::<AppState>()
+                .meeting
+                .lock()
+                .map(|m| m.is_recording())
+                .unwrap_or(false);
+            if recording {
+                let _ = meeting_stop(app.clone());
+            }
+            app.exit(0);
+        }
+        tray::TrayAction::Ignore => {}
+    }
+}
+
+/// Toggles recording. What the global hotkey and "Record now" both mean.
+pub fn toggle_recording(app: &tauri::AppHandle) {
+    let recording = app
+        .state::<AppState>()
+        .meeting
+        .lock()
+        .map(|m| m.is_recording())
+        .unwrap_or(false);
+
+    on_tray_action(
+        app,
+        if recording {
+            tray::TrayAction::StopRecording
+        } else {
+            tray::TrayAction::StartRecording
+        },
+    );
 }
 
 /// Set to `1` to spawn the sidecar and run one scripted session at launch.
@@ -452,6 +1018,41 @@ fn spawn_sidecar(app: &tauri::AppHandle, autorun_session: bool) -> Result<String
         if let SupervisorEvent::Event { event: inner } = &event {
             persist_final(&app_handle, inner);
             finish_active_meeting(&app_handle, inner);
+
+            // Detection (Phase 5). Both are reports; whether anything happens
+            // is decided in `detect`, and nothing here ever starts a recording.
+            match inner {
+                sidecar::SidecarEvent::MicActivity { started, .. } if !started.is_empty() => {
+                    on_mic_started(&app_handle, started);
+                }
+                sidecar::SidecarEvent::CalendarEvents { events, .. } => {
+                    on_calendar_events(&app_handle, events);
+                }
+                _ => {}
+            }
+        }
+
+        // The watchers live in the sidecar, so a restart loses them. Re-apply
+        // the stored settings on every `ready` — including after a crash — or
+        // detection would silently stop working until the app was relaunched.
+        if let SupervisorEvent::Event {
+            event: sidecar::SidecarEvent::Ready { .. },
+        } = &event
+        {
+            let settings = app_handle
+                .state::<AppState>()
+                .db
+                .lock()
+                .map(|db| load_settings(db.connection()))
+                .unwrap_or_default();
+            let _ = for_callback.send(&sidecar::SidecarCommand::WatchMic {
+                enabled: settings.mic_enabled,
+            });
+            let _ = for_callback.send(&sidecar::SidecarCommand::WatchCalendar {
+                enabled: settings.calendar_enabled,
+                // Never prompt from a restart — only when the user just enabled it.
+                request: false,
+            });
         }
 
         let _ = app_handle.emit(SIDECAR_EVENT, &event);
@@ -1054,6 +1655,24 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(
+            // Start/stop without leaving whatever you are in. The shortcut is
+            // deliberately awkward: this fires globally, so it must not collide
+            // with anything an app in the foreground might want.
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    use tauri_plugin_global_shortcut::ShortcutState;
+                    // Key-down only. Without this the toggle fires twice per
+                    // press and lands back where it started.
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    if shortcut == &record_shortcut() {
+                        toggle_recording(app);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -1103,9 +1722,105 @@ pub fn run() {
                     .build()
                     .unwrap_or_default(),
                 cancel_download: Arc::new(AtomicBool::new(false)),
+                recording_since: Mutex::new(None),
+                candidates: Mutex::new(detect::Queue::new()),
+                offered_events: Mutex::new(Vec::new()),
+                pending_question: Mutex::new(None),
                 last_permissions: Mutex::new(None),
                 link_params: Mutex::new(link::LinkParams::default()),
             });
+
+            // The menu bar item. Reported rather than fatal — the app is still
+            // fully usable from its window without it.
+            if let Err(err) = tray::install(app.handle()) {
+                eprintln!("could not install the menu bar item: {err}");
+            }
+            refresh_tray(app.handle());
+
+            // The watchers live in the sidecar, so detection cannot work unless
+            // it is running. Started here rather than left to the Sidecar card,
+            // which is a diagnostic surface the user has no reason to visit.
+            {
+                let settings =
+                    load_settings(app.state::<AppState>().db.lock().unwrap().connection());
+                if settings.mic_enabled || settings.calendar_enabled {
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        if let Err(err) = spawn_sidecar(&handle, false) {
+                            eprintln!("detection needs the sidecar, which would not start: {err}");
+                        }
+                    });
+                }
+            }
+
+            // Expires unanswered offers. Sharing the tray's timer would couple
+            // two unrelated cadences; this one only has to be roughly right.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let state = handle.state::<AppState>();
+                    let expired = state
+                        .candidates
+                        .lock()
+                        .map(|mut q| q.expire(now_ms()))
+                        .unwrap_or_default();
+                    if expired.is_empty() {
+                        continue;
+                    }
+                    let remaining = state
+                        .candidates
+                        .lock()
+                        .map(|q| q.pending().to_vec())
+                        .unwrap_or_default();
+                    let _ = handle.emit("detect://candidates", &remaining);
+                    if remaining.is_empty() {
+                        hide_popup(&handle);
+                    }
+                });
+            }
+
+            // Ticks the menu bar clock. A timer rather than an event stream
+            // because the elapsed time changes every second on its own, with
+            // nothing happening in the app to hang an event off.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    let recording = handle
+                        .state::<AppState>()
+                        .meeting
+                        .lock()
+                        .map(|m| m.is_recording())
+                        .unwrap_or(false);
+                    if recording {
+                        // Only the title moves each second. Rebuilding the whole
+                        // menu at 1 Hz would fight with a menu the user has open.
+                        let elapsed = handle
+                            .state::<AppState>()
+                            .recording_since
+                            .lock()
+                            .ok()
+                            .and_then(|since| *since)
+                            .map(|started| now_ms() - started)
+                            .unwrap_or(0);
+                        if let Some(icon) =
+                            handle.tray_by_id(&tauri::tray::TrayIconId::new("oatmeal"))
+                        {
+                            let _ = icon.set_title(Some(tray::format_elapsed(elapsed)));
+                        }
+                    }
+                });
+            }
+
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                // Reported, not fatal: another app may already own the
+                // combination, and losing a shortcut is not losing the app.
+                if let Err(err) = app.global_shortcut().register(record_shortcut()) {
+                    eprintln!("could not register the record shortcut: {err}");
+                }
+            }
 
             if std::env::var(AUTOSTART_ENV).as_deref() == Ok("1") {
                 let handle = app.handle().clone();
@@ -1156,6 +1871,15 @@ pub fn run() {
             runtime_install_server,
             runtime_install_model,
             runtime_cancel_download,
+            detection_respond,
+            detection_answer_app,
+            detection_candidates,
+            detection_pending_question,
+            detection_settings,
+            detection_set_settings,
+            detection_rules_list,
+            detection_rule_clear,
+            detection_builtin_apps,
             meeting_index,
             meeting_links,
             link_params_get,
@@ -1168,6 +1892,19 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_record_shortcut_keeps_all_three_modifiers() {
+        // This is registered system-wide, so it takes the combination away from
+        // every other app. Dropping a modifier to make it comfier would shadow
+        // something the user cares about more than this.
+        use tauri_plugin_global_shortcut::{Code, Modifiers};
+        let shortcut = record_shortcut();
+        assert_eq!(shortcut.key, Code::KeyR);
+        assert!(shortcut.mods.contains(Modifiers::CONTROL));
+        assert!(shortcut.mods.contains(Modifiers::ALT));
+        assert!(shortcut.mods.contains(Modifiers::SUPER));
+    }
 
     #[test]
     fn health_info_reports_the_crate_version() {

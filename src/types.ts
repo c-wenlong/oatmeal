@@ -245,3 +245,40 @@ export interface IndexReport {
   /** Set when no embedder was reachable and linking fell back to timestamps. */
   degraded: string | null;
 }
+
+/** Mirrors `Source` in src-tauri/src/detect/queue.rs. */
+export type DetectionSource = "mic" | "calendar" | "manual";
+
+/** Mirrors `Candidate` in src-tauri/src/detect/queue.rs. */
+export interface Candidate {
+  id: string;
+  source: DetectionSource;
+  title: string | null;
+  bundleId: string | null;
+  appName: string | null;
+  calendarEventId: string | null;
+  atMs: number;
+}
+
+/** Mirrors `Outcome` in src-tauri/src/detect/queue.rs. */
+export type DetectionOutcome = "start" | "ignore" | "ignore_app" | "expired";
+
+/** Mirrors `DetectionSettings` in src-tauri/src/lib.rs. */
+export interface DetectionSettings {
+  leadMs: number;
+  micEnabled: boolean;
+  calendarEnabled: boolean;
+}
+
+/** Mirrors `DetectionRule` in src-tauri/src/db/repo.rs. */
+export interface DetectionRule {
+  bundleId: string;
+  appName: string | null;
+  mode: "allow" | "ignore";
+}
+
+/** Payload of `detect://ask` — an app nobody has ruled on yet. */
+export interface AppQuestion {
+  bundleId: string;
+  appName: string | null;
+}

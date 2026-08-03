@@ -11,7 +11,8 @@
 | 2 · The meeting document | G9–G11 | ✅ **Complete** |
 | 3 · Generation | G12–G15 | ✅ **Complete** |
 | 4 · The differentiator | G16–G18 | ✅ **Complete** (G17 partly — see notes) |
-| 5–7 | G19–G29 | Next |
+| 5 · Autonomy | G19–G23 | ✅ **Complete** (see notes) |
+| 6–7 | G24–G29 | Next |
 
 **Speaker bleed is fixed** (G2 finding #2, carried since Phase 0). `EchoSuppressor`
 drops mic lines that are the speakers coming back through the room. Hardware AEC was
@@ -299,21 +300,63 @@ would have picked.
 
 ### G20 · Calendar sync
 **Depends on:** G3
+**Status:** ✅ Done, but **built on EventKit rather than Google/Microsoft OAuth**,
+which is a deliberate departure worth flagging. macOS already syncs the user's
+calendars — Google, Exchange, iCloud — and EventKit reads all of them locally. The
+OAuth route would mean registering clients, shipping a client secret inside an app
+whose whole premise is "nothing leaves this Mac", and storing refresh tokens. Reading
+what the OS already has is less code and a better promise. The trade: someone whose
+calendar is not in macOS Calendar sees nothing, which is recoverable later by adding
+a provider path — shipping a secret is not.
+
+The meeting-shaped heuristic lives in Rust (`detect::calendar`), pure and tested, so
+the sidecar stays a dumb reader. All-day entries are dropped outright.
+
+**Not verified end to end:** EventKit needs the user to grant calendar access, and
+the prompt only appears for a bundled app. The fetch and heuristic are tested; the
+grant is yours to give.
 **Build:** Google Calendar + Microsoft Graph OAuth, **read-only**, tokens in Keychain. Poll every ~5 min into `calendar_events`. Meeting-shaped heuristic: has a conferencing URL, or ≥2 attendees, or an explicit location. Skippable during onboarding — the app must work fully without it.
 **Done when:** today's events appear in-app within 5 minutes of being created in Google Calendar, and revoking access degrades gracefully to manual + mic detection.
 
 ### G21 · Mic-activation watcher
 **Depends on:** G19
+**Status:** ✅ Done and **verified against a real app taking the microphone**. Uses
+the audio process-object API (macOS 14.4+) — the only supported way to attribute
+input to a process without private API. Both `started` and `stopped` were observed
+end to end through the real sidecar with the correct bundle id.
+
+Two things worth recording:
+- `NSRunningApplication` returns nil for a process LaunchServices did not register —
+  and **browsers run audio in a helper process**, so "Meet in Chrome" would have been
+  undetectable. There is now a fallback that resolves the pid's executable path to
+  the *outermost* enclosing `.app`: the innermost is "Google Chrome Helper", which is
+  neither recognisable to a user nor stable across updates.
+- Processes with no bundle id are dropped at both ends. A rule has to outlive the
+  process, and a pid does not.
 **Build:** Poll which processes hold the audio input device. **Nothing fires without an explicit per-app rule.** Ship the built-in allowlist (Zoom, Meet in Chrome/Safari/Arc, Teams, Slack, Discord, FaceTime, Webex). An unknown app triggers a one-time "Should Oatmeal offer to record when *X* uses the mic?" with Always / Never; Never is permanent.
 **Done when:** Zoom triggers a candidate and a dictation tool like Whisperflow does not — and after choosing Never once, it never asks again.
 
 ### G22 · Detection orchestrator and popup
 **Depends on:** G20, G21
+**Status:** ✅ Done and **photographed working**: an unknown app took the microphone
+and the floating window appeared asking "Record when MicHolder uses the mic?" with
+Always / Never.
+
+Dedup is the headline requirement and is mutation-tested — never-merge, always-merge
+and source-downgrade all fail the suite. A calendar event and a mic activation within
+five minutes collapse into one offer that keeps the better-informed title; two
+different calendar events never merge however adjacent they are.
+
+**Nothing here records.** Every path produces an offer that needs a click.
 **Build:** One candidate queue fed by calendar, mic, and manual. Deduplicate — a calendar event and a mic activation for the same call must produce one popup, not two. Floating always-on-top window: title (from calendar when known), Start / Ignore / Ignore-this-app. Auto-dismiss after ~60s as Ignore. **Never auto-records without consent.**
 **Done when:** a calendar meeting pops up at `start - lead`, joining it does not produce a second popup, Start begins recording with the calendar title and attendees pre-filled, and nothing is ever recorded unprompted.
 
 ### G23 · Detection settings
 **Depends on:** G22
+**Status:** ✅ Done. Both triggers ship **off**; detection watches other apps and
+reads the calendar, and neither should begin because the app was launched. The
+allowed/ignored columns are editable, shipped defaults are labelled as such, and a
+user rule replaces the default it overrides rather than appearing twice.
 **Build:** Configurable calendar lead time (default 90s). The two-column app list — allowed vs ignored — fully editable, with a way to add an app not yet seen. Master toggles per trigger source.
 **Done when:** every detection behaviour from G20–G22 is reachable and reversible from the UI, with no hardcoded values left.
 

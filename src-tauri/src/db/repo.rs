@@ -686,6 +686,92 @@ pub fn meeting_links(conn: &Connection, meeting_id: &str) -> Result<Vec<StoredLi
     Ok(out)
 }
 
+// ------------------------------------------------------------------ detection
+
+/// A per-app detection rule as stored.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectionRule {
+    pub bundle_id: String,
+    pub app_name: Option<String>,
+    pub mode: String,
+}
+
+pub fn detection_rules(conn: &Connection) -> Result<Vec<DetectionRule>> {
+    let mut stmt = conn.prepare(
+        "SELECT bundle_id, app_name, mode FROM detection_rules ORDER BY app_name, bundle_id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(DetectionRule {
+            bundle_id: row.get(0)?,
+            app_name: row.get(1)?,
+            mode: row.get(2)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// Writes a rule, replacing any previous answer for the same app.
+///
+/// Upsert rather than insert: the settings screen lets someone change their
+/// mind, and a second answer must replace the first rather than collide with
+/// the unique constraint.
+pub fn set_detection_rule(
+    conn: &Connection,
+    bundle_id: &str,
+    app_name: Option<&str>,
+    mode: &str,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO detection_rules (id, bundle_id, app_name, mode, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT (bundle_id) DO UPDATE SET
+             mode = excluded.mode,
+             app_name = COALESCE(excluded.app_name, detection_rules.app_name)",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            bundle_id,
+            app_name,
+            mode,
+            now
+        ],
+    )?;
+    Ok(())
+}
+
+/// Removes a rule, returning the app to "ask once".
+pub fn clear_detection_rule(conn: &Connection, bundle_id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM detection_rules WHERE bundle_id = ?1",
+        params![bundle_id],
+    )?;
+    Ok(())
+}
+
+pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
 /// Surfaced by the `db_status` command so the Phase 0 harness can show that the
 /// data layer is real rather than merely compiled.
 #[derive(Debug, Clone, Serialize)]
@@ -1487,5 +1573,61 @@ mod tests {
             "regenerating a panel damaged the transcript"
         );
         assert_eq!(s.note_blocks, 1, "regenerating a panel damaged the notes");
+    }
+
+    #[test]
+    fn a_detection_rule_round_trips() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        set_detection_rule(conn, "us.zoom.xos", Some("Zoom"), "allow", 0).unwrap();
+
+        let rules = detection_rules(conn).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].bundle_id, "us.zoom.xos");
+        assert_eq!(rules[0].mode, "allow");
+        assert_eq!(rules[0].app_name.as_deref(), Some("Zoom"));
+    }
+
+    #[test]
+    fn answering_again_replaces_the_earlier_answer() {
+        // The settings screen lets someone change their mind; a second answer
+        // must not collide with the unique constraint on bundle_id.
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        set_detection_rule(conn, "us.zoom.xos", Some("Zoom"), "allow", 0).unwrap();
+        set_detection_rule(conn, "us.zoom.xos", None, "ignore", 1).unwrap();
+
+        let rules = detection_rules(conn).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].mode, "ignore");
+        // The name survives an update that did not carry one.
+        assert_eq!(rules[0].app_name.as_deref(), Some("Zoom"));
+    }
+
+    #[test]
+    fn clearing_a_rule_returns_the_app_to_being_asked_about() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        set_detection_rule(conn, "com.example.app", None, "ignore", 0).unwrap();
+        clear_detection_rule(conn, "com.example.app").unwrap();
+        assert!(detection_rules(conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_unrecognised_mode_is_refused_by_the_schema() {
+        // The CHECK constraint is the last line of defence against a typo
+        // silently disabling detection for an app.
+        let db = Database::open_in_memory().unwrap();
+        assert!(set_detection_rule(db.connection(), "x", None, "maybe", 0).is_err());
+    }
+
+    #[test]
+    fn settings_round_trip_and_overwrite() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        assert_eq!(get_setting(conn, "lead").unwrap(), None);
+        set_setting(conn, "lead", "90").unwrap();
+        set_setting(conn, "lead", "120").unwrap();
+        assert_eq!(get_setting(conn, "lead").unwrap().as_deref(), Some("120"));
     }
 }

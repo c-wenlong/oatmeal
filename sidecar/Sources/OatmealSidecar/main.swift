@@ -110,6 +110,32 @@ func emitTranscript(_ event: SidecarEvent) {
     }
 }
 
+/// Watches which apps hold the microphone (G21).
+///
+/// Our own pid is excluded: capture holds the input device for the whole of a
+/// recording, and reporting that would have Oatmeal detect itself and offer to
+/// record the meeting already being recorded.
+///
+/// Processes with no bundle identifier are dropped here rather than sent and
+/// filtered later — a daemon or a script can never be the subject of a per-app
+/// rule, so there is nothing the other side could ever do with one.
+let micWatcher = MicWatcher(ignoring: [ProcessInfo.processInfo.processIdentifier]) {
+    started, stopped in
+    let wire: ([MicUser]) -> [MicApp] = { users in
+        users.filter(\.isRuleable).map {
+            MicApp(pid: Int($0.pid), bundleId: $0.bundleId, name: $0.name)
+        }
+    }
+    let startedApps = wire(started)
+    let stoppedApps = wire(stopped)
+    guard !startedApps.isEmpty || !stoppedApps.isEmpty else { return }
+    emit(.micActivity(started: startedApps, stopped: stoppedApps))
+}
+
+let calendarWatcher = CalendarWatcher { events in
+    emit(.calendarEvents(events: events, authorized: true))
+}
+
 let micTranscriber = StreamingTranscriber(
     source: .mic, transcriber: transcriber, emit: emitTranscript)
 let systemTranscriber = StreamingTranscriber(
@@ -278,6 +304,37 @@ while let line = readLine(strippingNewline: true) {
 
     case .ping:
         emit(.pong)
+
+    case let .watchCalendar(enabled, request):
+        guard enabled else {
+            calendarWatcher.stop()
+            Log.info("Calendar watcher stopped.")
+            break
+        }
+        // Access can block on a system prompt, so never on the command loop —
+        // a pending dialog would stall every later command.
+        Thread.detachNewThread {
+            if request && !CalendarWatcher.isAuthorized {
+                calendarWatcher.requestAccess { granted in
+                    emit(.calendarEvents(events: [], authorized: granted))
+                    if granted { calendarWatcher.start() }
+                }
+            } else {
+                emit(
+                    .calendarEvents(
+                        events: CalendarWatcher.isAuthorized ? calendarWatcher.fetch() : [],
+                        authorized: CalendarWatcher.isAuthorized))
+                if CalendarWatcher.isAuthorized { calendarWatcher.start() }
+            }
+        }
+
+    case let .watchMic(enabled):
+        if enabled {
+            micWatcher.start()
+        } else {
+            micWatcher.stop()
+            Log.info("Mic watcher stopped.")
+        }
 
     case let .permissions(request):
         // TCC calls can block on a system prompt, so never run them on the

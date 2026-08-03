@@ -41,6 +41,14 @@ public enum SidecarCommand: Sendable, Equatable {
     /// Reports permission state. With `request: true` it also prompts, which is
     /// only useful while a capability is still `undetermined`.
     case permissions(request: Bool)
+    /// Starts or stops watching which apps hold the microphone (G21).
+    ///
+    /// Off until asked: this polls the audio system every couple of seconds,
+    /// and a user with detection disabled should pay nothing for it.
+    case watchMic(enabled: Bool)
+    /// Starts or stops reading the calendar (G20). With `request: true` it also
+    /// prompts for access.
+    case watchCalendar(enabled: Bool, request: Bool)
 }
 
 extension SidecarCommand: Codable {
@@ -49,6 +57,7 @@ extension SidecarCommand: Codable {
         case meetingId = "meeting_id"
         case sources
         case request
+        case enabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -71,6 +80,13 @@ extension SidecarCommand: Codable {
             self = .disarm
         case "permissions":
             self = .permissions(
+                request: try container.decodeIfPresent(Bool.self, forKey: .request) ?? false)
+        case "watch_mic":
+            self = .watchMic(
+                enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true)
+        case "watch_calendar":
+            self = .watchCalendar(
+                enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true,
                 request: try container.decodeIfPresent(Bool.self, forKey: .request) ?? false)
         default:
             throw DecodingError.dataCorruptedError(
@@ -96,6 +112,13 @@ extension SidecarCommand: Codable {
             try container.encode("disarm", forKey: .cmd)
         case let .permissions(request):
             try container.encode("permissions", forKey: .cmd)
+            try container.encode(request, forKey: .request)
+        case let .watchMic(enabled):
+            try container.encode("watch_mic", forKey: .cmd)
+            try container.encode(enabled, forKey: .enabled)
+        case let .watchCalendar(enabled, request):
+            try container.encode("watch_calendar", forKey: .cmd)
+            try container.encode(enabled, forKey: .enabled)
             try container.encode(request, forKey: .request)
         }
     }
@@ -123,6 +146,56 @@ public enum SidecarEvent: Sendable, Equatable {
         microphone: PermissionState, screenRecording: PermissionState, needsRelaunch: Bool)
     /// ASR model lifecycle. `progress` is 0...1 while downloading.
     case model(name: String, state: ModelState, progress: Double?, message: String?)
+    /// An app started or stopped using the microphone (G21).
+    ///
+    /// Purely a report. Whether it may trigger anything is a per-app rule the
+    /// Rust side owns — the sidecar has no policy in it.
+    case micActivity(started: [MicApp], stopped: [MicApp])
+    /// Upcoming calendar entries (G20). Reported raw — whether one looks like a
+    /// meeting is decided in Rust, where the rule is pure and tested.
+    case calendarEvents(events: [CalendarEvent], authorized: Bool)
+}
+
+/// A calendar entry as read from EventKit.
+public struct CalendarEvent: Codable, Sendable, Equatable {
+    public let id: String
+    public let title: String?
+    public let startsAt: Int
+    public let endsAt: Int?
+    public let location: String?
+    public let url: String?
+    public let notes: String?
+    public let attendeeCount: Int
+
+    public init(
+        id: String, title: String?, startsAt: Int, endsAt: Int?, location: String?,
+        url: String?, notes: String?, attendeeCount: Int
+    ) {
+        self.id = id
+        self.title = title
+        self.startsAt = startsAt
+        self.endsAt = endsAt
+        self.location = location
+        self.url = url
+        self.notes = notes
+        self.attendeeCount = attendeeCount
+    }
+}
+
+/// An app holding the microphone, as reported over the wire.
+public struct MicApp: Codable, Sendable, Equatable {
+    public let pid: Int
+    /// Absent for processes with no bundle — daemons, scripts, CLI tools. Those
+    /// can never be the subject of a per-app rule, so they are reported for
+    /// diagnostics and never acted on.
+    public let bundleId: String?
+    public let name: String?
+
+    public init(pid: Int, bundleId: String?, name: String?) {
+        self.pid = pid
+        self.bundleId = bundleId
+        self.name = name
+    }
 }
 
 public enum ModelState: String, Codable, Sendable {
@@ -136,6 +209,8 @@ extension SidecarEvent: Codable {
     private enum CodingKeys: String, CodingKey {
         case ev, version, text, source, t0, t1, conf, mic, system, message, fatal
         case name, state, progress
+        case started, stopped
+        case events, authorized
         case protocolVersion = "protocol"
         case audioPath = "audio_path"
         case durationMs = "duration_ms"
@@ -192,6 +267,14 @@ extension SidecarEvent: Codable {
                 state: try c.decode(ModelState.self, forKey: .state),
                 progress: try c.decodeIfPresent(Double.self, forKey: .progress),
                 message: try c.decodeIfPresent(String.self, forKey: .message))
+        case "mic_activity":
+            self = .micActivity(
+                started: try c.decodeIfPresent([MicApp].self, forKey: .started) ?? [],
+                stopped: try c.decodeIfPresent([MicApp].self, forKey: .stopped) ?? [])
+        case "calendar_events":
+            self = .calendarEvents(
+                events: try c.decodeIfPresent([CalendarEvent].self, forKey: .events) ?? [],
+                authorized: try c.decodeIfPresent(Bool.self, forKey: .authorized) ?? false)
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .ev, in: c, debugDescription: "unknown event '\(ev)'")
@@ -243,6 +326,14 @@ extension SidecarEvent: Codable {
             try c.encode(state, forKey: .state)
             try c.encodeIfPresent(progress, forKey: .progress)
             try c.encodeIfPresent(message, forKey: .message)
+        case let .micActivity(started, stopped):
+            try c.encode("mic_activity", forKey: .ev)
+            try c.encode(started, forKey: .started)
+            try c.encode(stopped, forKey: .stopped)
+        case let .calendarEvents(events, authorized):
+            try c.encode("calendar_events", forKey: .ev)
+            try c.encode(events, forKey: .events)
+            try c.encode(authorized, forKey: .authorized)
         }
     }
 }

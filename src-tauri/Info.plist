@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Merged into the bundle's Info.plist by Tauri. Each of these is required
+       before macOS will even show the corresponding prompt: asking without the
+       description string is an immediate crash, not a denial. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Oatmeal records your microphone so it can transcribe what you say in meetings. Audio stays on this Mac.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Oatmeal reads your calendar to notice when a meeting is about to start. It is read-only and never leaves this Mac.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Oatmeal reads your calendar to notice when a meeting is about to start. It is read-only and never leaves this Mac.</string>
+</dict>
+</plist>

@@ -22,6 +22,11 @@ import type {
   ModelOption,
   ModelStatus,
   DownloadProgress,
+  Candidate,
+  DetectionOutcome,
+  DetectionSettings,
+  DetectionRule,
+  AppQuestion,
 } from "../types";
 import type { PermissionsSnapshot } from "./permissions";
 
@@ -247,4 +252,65 @@ export function onMeetingIndexed(
   handler: (report: IndexReport) => void,
 ): Promise<UnlistenFn> {
   return listen<IndexReport>("meeting://indexed", (event) => handler(event.payload));
+}
+
+// ----------------------------------------------------------------- detection
+
+/** Answers an offer. Returns the new meeting id when the answer was "start". */
+export function detectionRespond(
+  candidateId: string,
+  outcome: DetectionOutcome,
+): Promise<string | null> {
+  return invoke<string | null>("detection_respond", { candidateId, outcome });
+}
+
+/** Records "always" or "never" for an app nobody has ruled on yet. */
+export function detectionAnswerApp(
+  bundleId: string,
+  appName: string | null,
+  allow: boolean,
+): Promise<void> {
+  return invoke<void>("detection_answer_app", { bundleId, appName, allow });
+}
+
+/** The app awaiting a one-time answer, if any. */
+export function detectionPendingQuestion(): Promise<AppQuestion | null> {
+  return invoke<AppQuestion | null>("detection_pending_question");
+}
+
+export function detectionCandidates(): Promise<Candidate[]> {
+  return invoke<Candidate[]>("detection_candidates");
+}
+
+export function detectionSettings(): Promise<DetectionSettings> {
+  return invoke<DetectionSettings>("detection_settings");
+}
+
+export function detectionSetSettings(settings: DetectionSettings): Promise<void> {
+  return invoke<void>("detection_set_settings", { settings });
+}
+
+export function detectionRulesList(): Promise<DetectionRule[]> {
+  return invoke<DetectionRule[]>("detection_rules_list");
+}
+
+export function detectionRuleClear(bundleId: string): Promise<void> {
+  return invoke<void>("detection_rule_clear", { bundleId });
+}
+
+/** The shipped allowlist, as (bundleId, name) pairs. */
+export function detectionBuiltinApps(): Promise<[string, string][]> {
+  return invoke<[string, string][]>("detection_builtin_apps");
+}
+
+export function onCandidates(
+  handler: (candidates: Candidate[]) => void,
+): Promise<UnlistenFn> {
+  return listen<Candidate[]>("detect://candidates", (e) => handler(e.payload));
+}
+
+export function onAppQuestion(
+  handler: (question: AppQuestion) => void,
+): Promise<UnlistenFn> {
+  return listen<AppQuestion>("detect://ask", (e) => handler(e.payload));
 }

@@ -69,6 +69,16 @@ pub enum SidecarCommand {
         #[serde(default)]
         request: bool,
     },
+    /// Start or stop watching which apps hold the microphone (G21).
+    WatchMic {
+        enabled: bool,
+    },
+    /// Start or stop reading the calendar (G20).
+    WatchCalendar {
+        enabled: bool,
+        #[serde(default)]
+        request: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -130,6 +140,34 @@ pub enum SidecarEvent {
         #[serde(default)]
         message: Option<String>,
     },
+    /// An app started or stopped using the microphone (G21). A report only —
+    /// the policy about what may act on it lives in `detect::rules`.
+    MicActivity {
+        #[serde(default)]
+        started: Vec<MicApp>,
+        #[serde(default)]
+        stopped: Vec<MicApp>,
+    },
+    /// The upcoming calendar window (G20), reported raw.
+    CalendarEvents {
+        #[serde(default)]
+        events: Vec<crate::detect::CalendarEvent>,
+        #[serde(default)]
+        authorized: bool,
+    },
+}
+
+/// An app holding the microphone.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MicApp {
+    pub pid: i64,
+    /// Absent for processes with no bundle — daemons and scripts. Nothing can
+    /// be ruled about those, so they are never acted on.
+    #[serde(default)]
+    pub bundle_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 impl SidecarEvent {
