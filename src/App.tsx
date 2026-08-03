@@ -6,6 +6,8 @@ import { PermissionsCard } from "./components/PermissionsCard";
 import { SidecarCard } from "./components/SidecarCard";
 import { DetectionPopup } from "./components/DetectionPopup";
 import { DetectionSettingsPanel } from "./components/DetectionSettings";
+import { SearchCard } from "./components/SearchCard";
+import { ChatCard } from "./components/ChatCard";
 
 /**
  * Which window this is.
@@ -33,6 +35,19 @@ function App() {
     return <DetectionPopup />;
   }
 
+  /**
+   * Opens a meeting and scrolls to a moment in it.
+   *
+   * Routed through an event rather than lifted state: `RecordCard` already
+   * owns which meeting is open and how to reveal a line, and duplicating that
+   * here would give two components an opinion about the same thing.
+   */
+  const reveal = (meetingId: string, utteranceId: number) => {
+    window.dispatchEvent(
+      new CustomEvent("oatmeal:reveal", { detail: { meetingId, utteranceId } }),
+    );
+  };
+
   return (
     <main className="app">
       <header className="masthead">
@@ -48,6 +63,11 @@ function App() {
           gates it, then the diagnostics. The sidecar log grows without bound, so
           it sits below anything that needs to stay glanceable. */}
       <RecordCard />
+      {/* Search and Ask sit directly under the recording surface: they are what
+          the corpus is *for*, and burying them under diagnostics would say the
+          opposite. */}
+      <SearchCard onReveal={reveal} />
+      <ChatCard onReveal={reveal} />
       <DetectionSettingsPanel />
       <PermissionsCard />
       <ProviderCard />

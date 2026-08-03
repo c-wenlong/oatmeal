@@ -282,3 +282,85 @@ export interface AppQuestion {
   bundleId: string;
   appName: string | null;
 }
+
+/** Mirrors `Folder` in src-tauri/src/db/repo.rs. */
+export interface Folder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  meetingCount: number;
+}
+
+/** Mirrors `MatchKind` in src-tauri/src/search/mod.rs. */
+export type MatchKind = "keyword" | "semantic" | "both";
+
+/** Mirrors `Hit` in src-tauri/src/search/mod.rs. */
+export interface SearchHit {
+  utteranceId: number;
+  meetingId: string;
+  text: string;
+  startMs: number;
+  kind: MatchKind;
+  score: number;
+}
+
+/** Mirrors `Preview` in src-tauri/src/search/preview.rs. */
+export interface Preview {
+  text: string;
+  /** Character offsets into `text`, not bytes. */
+  spans: [number, number][];
+  truncatedStart: boolean;
+  truncatedEnd: boolean;
+}
+
+/** Mirrors `SearchResult` in src-tauri/src/search/query.rs. */
+export interface SearchResult {
+  meetingId: string;
+  title: string | null;
+  startedAt: number;
+  bestAtMs: number;
+  bestUtteranceId: number;
+  hits: SearchHit[];
+  score: number;
+  previews: Preview[];
+}
+
+/** Mirrors `SearchResponse` in src-tauri/src/search/query.rs. */
+export interface SearchResponse {
+  results: SearchResult[];
+  /** False when the embedder was unreachable, so the search was keyword-only. */
+  semantic: boolean;
+}
+
+/** Mirrors `Citation` in src-tauri/src/chat/mod.rs. */
+export interface ChatCitation {
+  utteranceId: number;
+  meetingId: string;
+  meetingTitle: string | null;
+  startMs: number;
+}
+
+/** Mirrors `Claim` in src-tauri/src/chat/mod.rs. */
+export interface Claim {
+  text: string;
+  citations: ChatCitation[];
+}
+
+/** Mirrors `AnswerReport` in src-tauri/src/chat/mod.rs. */
+export interface AnswerReport {
+  droppedCitations: number;
+  uncitedClaims: number;
+}
+
+/** Mirrors `ChatReply` in src-tauri/src/chat/mod.rs. */
+export interface ChatReply {
+  answer: { claims: Claim[] };
+  report: AnswerReport;
+  context: {
+    utteranceId: number;
+    meetingId: string;
+    meetingTitle: string | null;
+    startMs: number;
+    text: string;
+  }[];
+}

@@ -12,7 +12,8 @@
 | 3 · Generation | G12–G15 | ✅ **Complete** |
 | 4 · The differentiator | G16–G18 | ✅ **Complete** (G17 partly — see notes) |
 | 5 · Autonomy | G19–G23 | ✅ **Complete** (see notes) |
-| 6–7 | G24–G29 | Next |
+| 6 · Corpus | G24–G25 | ✅ **Complete** |
+| 7 · Ship | G26–G29 | Next |
 
 **Speaker bleed is fixed** (G2 finding #2, carried since Phase 0). `EchoSuppressor`
 drops mic lines that are the speakers coming back through the room. Hardware AEC was
@@ -368,11 +369,63 @@ user rule replaces the default it overrides rather than appearing twice.
 **Depends on:** G16, G11
 **Build:** Folder CRUD, assign meetings to folders. Search combining FTS5 keyword and vector similarity, results grouped by meeting with matched-span previews.
 **Done when:** searching a phrase you remember imperfectly from three weeks ago finds the right meeting and jumps to the right moment in the transcript.
+**Status:** ✅ Done, and **verified against real transcripts with the real embedder**
+(`cargo run --example trysearch`), not only against the bag-of-words stand-in the
+unit tests use. Three queries over two seeded meetings:
+
+| Query | Found | Moment |
+|---|---|---|
+| `two year commitment` | Vendor negotiation | 12.0s — exact line, all three words marked |
+| `supplier lock-in` | Vendor negotiation | 20.0s — **no word in common**, pure semantics |
+| `shrink the scope` | Platform planning | 15.0s — "cut the release scope in half" |
+
+The two indexes are fused by **rank position, not score**: FTS5's `rank` is a
+negative BM25 and cosine distance is a small positive, neither with a stable range,
+so normalising and blending them would be arithmetic on incomparable units.
+Reciprocal rank fusion means agreement between the indexes beats confidence from
+either one.
+
+**Two bugs the real data found that the unit tests could not.** The third query
+above originally returned the *wrong meeting*:
+
+- FTS5 ANDs terms by default, so one wrong word ("shrink") made the keyword half
+  match nothing at all. A feature for half-remembered phrases cannot require every
+  word to be right — terms are now ORed.
+- That exposed the second: under `OR`, "the" matches every line and **earns a
+  rank**, and because fusion is by rank position, BM25's sensible decision to
+  weight it near zero never gets a say. Common words are now dropped from the
+  query, not merely from the highlight.
+
+Snippets return character offsets rather than markup, so a transcript cannot smuggle
+HTML into the UI, and the frontend counts characters (`Array.from`) rather than
+UTF-16 units — `slice` drifts by one per emoji and highlights the wrong words after
+it. Deleting a folder keeps its meetings, which the confirmation says out loud.
 
 ### G25 · Chat over meetings
 **Depends on:** G24
 **Build:** Chat scoped to one meeting or a whole folder. Retrieval over `utterances` + `panels`, answers citing meeting and timestamp. Uses the G12 provider layer, so it works locally.
 **Done when:** "what did we commit to across these calls?" over a folder of five meetings returns an answer whose every claim carries a citation that resolves.
+**Status:** ✅ Done, and **verified with that exact question against a live model**
+(`live_a_folder_question_is_answered_with_resolving_citations`, ignored by default).
+Over five meetings with one commitment each, gemma4:e2b returned five claims —
+**every citation resolved, 0 dropped, 0 uncited.**
+
+The citation gate is the panel gate again, for the same reason: a model asked to
+cite will invent plausible ids, and a chip that jumps nowhere is worse than no
+answer because the user has no reason to doubt it until they click. Three mutations
+all fail the suite — accepting every citation, deleting uncited claims instead of
+marking them, and trusting the model's own idea of which meeting a line came from.
+
+A claim that loses every citation is **kept and marked uncited**, never deleted:
+silently removing what the model produced hides what it did, and the user can still
+judge a sentence.
+
+Retrieval reuses the G24 search rather than adding a second path — two ways to find
+a line would eventually disagree, and a wrong answer stays debuggable when the
+evidence is the same evidence the user could have found by searching. A single
+meeting is handed over whole; retrieval over one conversation risks dropping the
+line that answers the question because the question happened not to share its
+words.
 
 ---
 

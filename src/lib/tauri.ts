@@ -27,6 +27,9 @@ import type {
   DetectionSettings,
   DetectionRule,
   AppQuestion,
+  Folder,
+  SearchResponse,
+  ChatReply,
 } from "../types";
 import type { PermissionsSnapshot } from "./permissions";
 
@@ -313,4 +316,51 @@ export function onAppQuestion(
   handler: (question: AppQuestion) => void,
 ): Promise<UnlistenFn> {
   return listen<AppQuestion>("detect://ask", (e) => handler(e.payload));
+}
+
+// ------------------------------------------------------------ folders + search
+
+export function foldersList(): Promise<Folder[]> {
+  return invoke<Folder[]>("folders_list");
+}
+
+export function folderCreate(name: string, parentId?: string | null): Promise<string> {
+  return invoke<string>("folder_create", { name, parentId: parentId ?? null });
+}
+
+export function folderRename(folderId: string, name: string): Promise<void> {
+  return invoke<void>("folder_rename", { folderId, name });
+}
+
+/** Deletes a folder. Its meetings survive and become unfiled. */
+export function folderDelete(folderId: string): Promise<void> {
+  return invoke<void>("folder_delete", { folderId });
+}
+
+/** Meetings in a folder, or unfiled ones when `folderId` is null. */
+export function folderMeetings(folderId: string | null): Promise<MeetingSummary[]> {
+  return invoke<MeetingSummary[]>("folder_meetings", { folderId });
+}
+
+export function meetingSetFolder(
+  meetingId: string,
+  folderId: string | null,
+): Promise<void> {
+  return invoke<void>("meeting_set_folder", { meetingId, folderId });
+}
+
+export function searchTranscripts(
+  query: string,
+  folderId: string | null,
+): Promise<SearchResponse> {
+  return invoke<SearchResponse>("search_transcripts", { query, folderId });
+}
+
+/** Asks a question over one meeting or a whole folder. */
+export function chatAsk(
+  question: string,
+  meetingId: string | null,
+  folderId: string | null,
+): Promise<ChatReply> {
+  return invoke<ChatReply>("chat_ask", { question, meetingId, folderId });
 }

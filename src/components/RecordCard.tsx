@@ -381,6 +381,28 @@ export function RecordCard() {
 
   const shown = viewing ?? active;
 
+  // Search and Ask ask for a moment by (meeting, utterance). Opening the
+  // meeting first matters: revealing a line in a transcript that is not loaded
+  // scrolls to nothing, which is exactly how a citation chip looks broken.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ meetingId: string; utteranceId: number }>)
+        .detail;
+      if (!detail) return;
+      if (detail.meetingId === shown) {
+        revealUtterance(detail.utteranceId);
+        return;
+      }
+      void open(detail.meetingId).then(() => {
+        // After the transcript has rendered, or the scroll target does not
+        // exist yet.
+        requestAnimationFrame(() => revealUtterance(detail.utteranceId));
+      });
+    };
+    window.addEventListener("oatmeal:reveal", handler);
+    return () => window.removeEventListener("oatmeal:reveal", handler);
+  });
+
   const reloadLinks = useCallback(() => {
     if (!shown) {
       setLinks([]);

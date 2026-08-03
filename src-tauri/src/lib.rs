@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod db;
 pub mod detect;
 pub mod embed;
@@ -5,6 +6,7 @@ pub mod link;
 pub mod llm;
 pub mod meeting;
 pub mod panel;
+pub mod search;
 pub mod sidecar;
 pub mod tray;
 
@@ -425,6 +427,141 @@ pub fn record_shortcut() -> tauri_plugin_global_shortcut::Shortcut {
         Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER),
         Code::KeyR,
     )
+}
+
+// ------------------------------------------------------------ folders + search
+
+#[tauri::command]
+fn folders_list(state: tauri::State<'_, AppState>) -> Result<Vec<repo::Folder>, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::list_folders(db.connection()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn folder_create(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    parent_id: Option<String>,
+) -> Result<String, String> {
+    if name.trim().is_empty() {
+        return Err("a folder needs a name".into());
+    }
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::create_folder(db.connection(), &name, parent_id.as_deref(), now_ms())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn folder_rename(
+    state: tauri::State<'_, AppState>,
+    folder_id: String,
+    name: String,
+) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("a folder needs a name".into());
+    }
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::rename_folder(db.connection(), &folder_id, &name).map_err(|e| e.to_string())
+}
+
+/// Deletes a folder. Its meetings survive and become unfiled.
+#[tauri::command]
+fn folder_delete(state: tauri::State<'_, AppState>, folder_id: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::delete_folder(db.connection(), &folder_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn meeting_set_folder(
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+    folder_id: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::set_meeting_folder(db.connection(), &meeting_id, folder_id.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn folder_meetings(
+    state: tauri::State<'_, AppState>,
+    folder_id: Option<String>,
+) -> Result<Vec<repo::MeetingSummary>, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::meetings_in_folder(db.connection(), folder_id.as_deref(), 200).map_err(|e| e.to_string())
+}
+
+/// Searches transcripts. Blocking thread for the same reason indexing is:
+/// `Connection` is `!Send`, so its guard cannot be held across an `.await`.
+#[tauri::command]
+async fn search_transcripts(
+    app: tauri::AppHandle,
+    query: String,
+    folder_id: Option<String>,
+) -> Result<search::SearchResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let embedder = embed::HttpEmbedder::local();
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        tauri::async_runtime::block_on(search::search(
+            db.connection(),
+            &query,
+            folder_id.as_deref(),
+            &embedder,
+            25,
+        ))
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("search thread failed: {e}"))?
+}
+
+// --------------------------------------------------------------------- chat
+
+/// Answers a question over one meeting or a whole folder.
+#[tauri::command]
+async fn chat_ask(
+    app: tauri::AppHandle,
+    question: String,
+    meeting_id: Option<String>,
+    folder_id: Option<String>,
+) -> Result<chat::ChatReply, String> {
+    // Retrieval touches the database and cannot cross an await; generation is a
+    // network call and must not hold the lock. So they are split: gather under
+    // the lock, release, then ask.
+    let gather = {
+        let app = app.clone();
+        let question = question.clone();
+        let meeting_id = meeting_id.clone();
+        let folder_id = folder_id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let state = app.state::<AppState>();
+            let embedder = embed::HttpEmbedder::local();
+            let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+            tauri::async_runtime::block_on(chat::gather_context(
+                db.connection(),
+                &question,
+                meeting_id.as_deref(),
+                folder_id.as_deref(),
+                &embedder,
+                12,
+            ))
+            .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("retrieval thread failed: {e}"))?
+    }?;
+
+    let state = app.state::<AppState>();
+    let config = state
+        .provider
+        .lock()
+        .map_err(|_| "provider lock poisoned")?
+        .clone();
+
+    chat::ask(&state.llm, &config, state.keys.as_ref(), &question, gather)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------- detection
@@ -1880,6 +2017,14 @@ pub fn run() {
             detection_rules_list,
             detection_rule_clear,
             detection_builtin_apps,
+            folders_list,
+            folder_create,
+            folder_rename,
+            folder_delete,
+            folder_meetings,
+            meeting_set_folder,
+            search_transcripts,
+            chat_ask,
             meeting_index,
             meeting_links,
             link_params_get,

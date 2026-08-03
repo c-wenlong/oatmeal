@@ -686,6 +686,215 @@ pub fn meeting_links(conn: &Connection, meeting_id: &str) -> Result<Vec<StoredLi
     Ok(out)
 }
 
+// -------------------------------------------------------------------- folders
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Folder {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub meeting_count: i64,
+}
+
+pub fn list_folders(conn: &Connection) -> Result<Vec<Folder>> {
+    let mut stmt = conn.prepare(
+        "SELECT f.id, f.name, f.parent_id,
+                (SELECT COUNT(*) FROM meetings m WHERE m.folder_id = f.id)
+         FROM folders f
+         ORDER BY f.name COLLATE NOCASE",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(Folder {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            parent_id: row.get(2)?,
+            meeting_count: row.get(3)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+pub fn create_folder(
+    conn: &Connection,
+    name: &str,
+    parent_id: Option<&str>,
+    now: i64,
+) -> Result<String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO folders (id, name, parent_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![id, name.trim(), parent_id, now],
+    )?;
+    Ok(id)
+}
+
+pub fn rename_folder(conn: &Connection, folder_id: &str, name: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE folders SET name = ?2 WHERE id = ?1",
+        params![folder_id, name.trim()],
+    )?;
+    Ok(())
+}
+
+/// Deletes a folder. Meetings inside are **kept** and become unfiled.
+///
+/// `meetings.folder_id` is `ON DELETE SET NULL` precisely so this cannot destroy
+/// recordings: deleting a folder is an organisational act, and losing an hour of
+/// transcript to one would be indefensible.
+pub fn delete_folder(conn: &Connection, folder_id: &str) -> Result<()> {
+    conn.execute("DELETE FROM folders WHERE id = ?1", params![folder_id])?;
+    Ok(())
+}
+
+/// Files a meeting, or unfiles it with `None`.
+pub fn set_meeting_folder(
+    conn: &Connection,
+    meeting_id: &str,
+    folder_id: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE meetings SET folder_id = ?2 WHERE id = ?1",
+        params![meeting_id, folder_id],
+    )?;
+    Ok(())
+}
+
+/// Meetings in a folder, or unfiled ones when `folder_id` is `None`.
+pub fn meetings_in_folder(
+    conn: &Connection,
+    folder_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<MeetingSummary>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.id, m.title, m.started_at, m.ended_at, m.status, m.audio_path,
+                (SELECT COUNT(*) FROM utterances u WHERE u.meeting_id = m.id)
+         FROM meetings m
+         WHERE (?1 IS NULL AND m.folder_id IS NULL) OR m.folder_id = ?1
+         ORDER BY m.started_at DESC
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![folder_id, limit], |row| {
+        Ok(MeetingSummary {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            started_at: row.get(2)?,
+            ended_at: row.get(3)?,
+            status: row.get(4)?,
+            audio_path: row.get(5)?,
+            utterance_count: row.get(6)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// One utterance, with what search needs to rank and preview it.
+#[derive(Debug, Clone)]
+pub struct SearchRow {
+    pub id: i64,
+    pub meeting_id: String,
+    pub text: String,
+    pub start_ms: i64,
+}
+
+/// Full-text hits, best first, optionally confined to a folder.
+pub fn search_rows_fts(
+    conn: &Connection,
+    fts_query: &str,
+    folder_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<SearchRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT u.id, u.meeting_id, u.text, u.start_ms
+         FROM utterances_fts f
+         JOIN utterances u ON u.id = f.rowid
+         JOIN meetings m ON m.id = u.meeting_id
+         WHERE utterances_fts MATCH ?1
+           AND (?2 IS NULL OR m.folder_id = ?2)
+         ORDER BY f.rank
+         LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(params![fts_query, folder_id, limit], |row| {
+        Ok(SearchRow {
+            id: row.get(0)?,
+            meeting_id: row.get(1)?,
+            text: row.get(2)?,
+            start_ms: row.get(3)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// Loads specific utterances by id, for the semantic half of a search.
+pub fn utterances_by_id(conn: &Connection, ids: &[i64]) -> Result<Vec<SearchRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = std::iter::repeat_n("?", ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT id, meeting_id, text, start_ms FROM utterances WHERE id IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let values: Vec<&dyn rusqlite::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+    let rows = stmt.query_map(values.as_slice(), |row| {
+        Ok(SearchRow {
+            id: row.get(0)?,
+            meeting_id: row.get(1)?,
+            text: row.get(2)?,
+            start_ms: row.get(3)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// Title and start time for a set of meetings, for grouping search results.
+pub fn meeting_headers(
+    conn: &Connection,
+    ids: &[String],
+) -> Result<std::collections::HashMap<String, (Option<String>, i64)>> {
+    let mut out = std::collections::HashMap::new();
+    if ids.is_empty() {
+        return Ok(out);
+    }
+    let placeholders = std::iter::repeat_n("?", ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!("SELECT id, title, started_at FROM meetings WHERE id IN ({placeholders})");
+    let mut stmt = conn.prepare(&sql)?;
+    let values: Vec<&dyn rusqlite::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+    let rows = stmt.query_map(values.as_slice(), |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            (row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?),
+        ))
+    })?;
+    for row in rows {
+        let (id, header) = row?;
+        out.insert(id, header);
+    }
+    Ok(out)
+}
+
 // ------------------------------------------------------------------ detection
 
 /// A per-app detection rule as stored.
@@ -1629,5 +1838,111 @@ mod tests {
         set_setting(conn, "lead", "90").unwrap();
         set_setting(conn, "lead", "120").unwrap();
         assert_eq!(get_setting(conn, "lead").unwrap().as_deref(), Some("120"));
+    }
+
+    // MARK: folders
+
+    #[test]
+    fn a_folder_round_trips_with_its_meeting_count() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        let id = create_folder(conn, "Vendors", None, 0).unwrap();
+        insert_meeting(conn, "m1", "Review", 0).unwrap();
+        set_meeting_folder(conn, "m1", Some(&id)).unwrap();
+
+        let folders = list_folders(conn).unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].name, "Vendors");
+        assert_eq!(folders[0].meeting_count, 1);
+    }
+
+    #[test]
+    fn deleting_a_folder_keeps_its_meetings() {
+        // `folder_id` is ON DELETE SET NULL precisely so an organisational act
+        // cannot destroy an hour of transcript.
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        let id = create_folder(conn, "Temp", None, 0).unwrap();
+        insert_meeting(conn, "m1", "Review", 0).unwrap();
+        set_meeting_folder(conn, "m1", Some(&id)).unwrap();
+
+        delete_folder(conn, &id).unwrap();
+
+        assert!(list_folders(conn).unwrap().is_empty());
+        assert_eq!(
+            list_meetings(conn, 10).unwrap().len(),
+            1,
+            "meeting was lost"
+        );
+        // And it is unfiled, not orphaned into a folder that no longer exists.
+        assert_eq!(meetings_in_folder(conn, None, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_meeting_can_be_unfiled() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        let id = create_folder(conn, "Vendors", None, 0).unwrap();
+        insert_meeting(conn, "m1", "Review", 0).unwrap();
+        set_meeting_folder(conn, "m1", Some(&id)).unwrap();
+        set_meeting_folder(conn, "m1", None).unwrap();
+
+        assert!(meetings_in_folder(conn, Some(&id), 10).unwrap().is_empty());
+        assert_eq!(meetings_in_folder(conn, None, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn renaming_a_folder_keeps_its_contents() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        let id = create_folder(conn, "Old", None, 0).unwrap();
+        insert_meeting(conn, "m1", "Review", 0).unwrap();
+        set_meeting_folder(conn, "m1", Some(&id)).unwrap();
+
+        rename_folder(conn, &id, "New").unwrap();
+        let folders = list_folders(conn).unwrap();
+        assert_eq!(folders[0].name, "New");
+        assert_eq!(folders[0].meeting_count, 1);
+    }
+
+    #[test]
+    fn folder_names_are_trimmed() {
+        // A name of spaces renders as an unclickable blank row.
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        create_folder(conn, "  Vendors  ", None, 0).unwrap();
+        assert_eq!(list_folders(conn).unwrap()[0].name, "Vendors");
+    }
+
+    #[test]
+    fn deleting_a_parent_folder_takes_its_children() {
+        // `folders.parent_id` cascades; a child pointing at a missing parent
+        // would never render.
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        let parent = create_folder(conn, "Clients", None, 0).unwrap();
+        create_folder(conn, "Acme", Some(&parent), 0).unwrap();
+
+        delete_folder(conn, &parent).unwrap();
+        assert!(list_folders(conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn unfiled_meetings_are_listable() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        insert_meeting(conn, "m1", "Loose", 0).unwrap();
+        assert_eq!(meetings_in_folder(conn, None, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn meeting_headers_ignores_ids_that_no_longer_exist() {
+        // A meeting deleted between a search and its grouping must not error.
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        insert_meeting(conn, "m1", "Here", 5).unwrap();
+        let headers = meeting_headers(conn, &["m1".to_string(), "gone".to_string()]).unwrap();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers["m1"].1, 5);
     }
 }
