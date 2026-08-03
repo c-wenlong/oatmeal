@@ -1,0 +1,163 @@
+name: Release
+
+# Cutting a release. Tagging is the trigger, so a release is always a commit
+# someone deliberately marked rather than whatever happened to be on main.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and upload nothing"
+        type: boolean
+        default: true
+
+jobs:
+  release:
+    # Apple Silicon only, per SPEC section 2 — and the sidecar links against
+    # arm64 CoreML, so a cross build would not produce a usable binary.
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    env:
+      # Signing and notarization are all-or-nothing: the build is either
+      # properly released or plainly marked unsigned. A half-signed artifact
+      # that fails Gatekeeper in the user's Downloads folder is the worst
+      # outcome, so the presence of the whole set is checked once, here.
+      HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_ID != '' }}
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          cargo --version
+          echo "signing configured: $HAS_SIGNING"
+          echo "updater key configured: $HAS_UPDATER_KEY"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The bundled sidecar is a separate binary; `swift build` alone does not
+      # refresh the copy Tauri bundles, and shipping a stale one has already
+      # broken a release candidate once.
+      - name: Build sidecar
+        run: ./scripts/build-sidecar.sh release
+
+      - name: Verify before shipping
+        run: |
+          pnpm verify
+          cd src-tauri && cargo test --lib
+
+      - name: Import signing certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # A throwaway keychain, unlocked only for this job.
+          KEYCHAIN=build.keychain
+          security create-keychain -p runner "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p runner "$KEYCHAIN"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security import certificate.p12 -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k runner "$KEYCHAIN"
+          rm certificate.p12
+
+      - name: Build and bundle
+        env:
+          # Present only when configured; Tauri signs when it sees an identity
+          # and produces an unsigned bundle when it does not.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build
+
+      # Proves the claim rather than assuming it. `spctl` is what Gatekeeper
+      # itself consults, so a pass here is the same answer a user's Mac gives.
+      - name: Verify the signature
+        if: env.HAS_SIGNING == 'true'
+        run: |
+          APP="src-tauri/target/release/bundle/macos/Oatmeal.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+          echo "--- entitlements actually applied ---"
+          codesign -d --entitlements - "$APP"
+
+      - name: Warn when unsigned
+        if: env.HAS_SIGNING != 'true'
+        run: |
+          echo "::warning::Built WITHOUT signing or notarization."
+          echo "::warning::This DMG will show a Gatekeeper warning on a clean Mac."
+          echo "::warning::Set APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,"
+          echo "::warning::APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD and"
+          echo "::warning::APPLE_TEAM_ID to produce a releasable build."
+
+      - name: Warn when updates are unsigned
+        if: env.HAS_UPDATER_KEY != 'true'
+        run: |
+          echo "::warning::No TAURI_SIGNING_PRIVATE_KEY, so no update artifact was"
+          echo "::warning::signed. Generate one with 'pnpm tauri signer generate'"
+          echo "::warning::and put the public half in tauri.conf.json."
+
+      - name: Collect artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: oatmeal-macos
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+          if-no-files-found: error
+
+      # The updater reads this. Written from the artifacts rather than by hand,
+      # because a manifest whose signature does not match its archive fails at
+      # the user's machine and nowhere earlier.
+      - name: Build the update manifest
+        if: startsWith(github.ref, 'refs/tags/') && env.HAS_UPDATER_KEY == 'true'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARCHIVE=$(ls src-tauri/target/release/bundle/macos/*.app.tar.gz | head -1)
+          SIGNATURE=$(cat "${ARCHIVE}.sig")
+          cat > latest.json <<EOF
+          {
+            "version": "${VERSION}",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "darwin-aarch64": {
+                "signature": "${SIGNATURE}",
+                "url": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$ARCHIVE")"
+              }
+            }
+          }
+          EOF
+          cat latest.json
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/') && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            src-tauri/target/release/bundle/dmg/*.dmg \
+            src-tauri/target/release/bundle/macos/*.app.tar.gz* \
+            $([ -f latest.json ] && echo latest.json)

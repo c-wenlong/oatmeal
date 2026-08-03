@@ -364,3 +364,60 @@ export interface ChatReply {
     text: string;
   }[];
 }
+
+/** Mirrors `Retention` in src-tauri/src/retention/mod.rs. */
+export type Retention = { kind: "days"; days: number } | { kind: "forever" };
+
+/** Mirrors `Provenance` in src-tauri/src/db/repo.rs. */
+export interface Provenance {
+  panelId: string;
+  meetingId: string;
+  meetingTitle: string | null;
+  provider: string | null;
+  model: string | null;
+  generatedAt: number;
+  /** Whether this generation stayed on the machine. Decided in Rust. */
+  local: boolean;
+}
+
+/** Mirrors `SweepReport` in src-tauri/src/retention/mod.rs. */
+export interface SweepReport {
+  deleted: number;
+  alreadyMissing: number;
+  freedBytes: number;
+}
+
+/** Mirrors `PrivacySnapshot` in src-tauri/src/lib.rs. */
+export interface PrivacySnapshot {
+  retention: Retention;
+  audioFiles: number;
+  audioBytes: number;
+  generations: Provenance[];
+  /** Always false. */
+  telemetry: boolean;
+}
+
+/** Mirrors `Database` in src-tauri/src/notion/client.rs. */
+export interface NotionDatabase {
+  id: string;
+  title: string;
+  titleProperty: string;
+  properties: string[];
+}
+
+/** Mirrors `NotionSettings` in src-tauri/src/lib.rs. */
+export interface NotionSettings {
+  /** Never the token itself. */
+  hasToken: boolean;
+  databaseId: string | null;
+  includeTranscript: boolean;
+  autoExport: boolean;
+}
+
+/** Mirrors `ExportResult` in src-tauri/src/notion/export.rs. */
+export interface ExportResult {
+  pageId: string;
+  /** False when an existing page was updated. */
+  created: boolean;
+  blocks: number;
+}

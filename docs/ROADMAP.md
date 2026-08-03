@@ -13,7 +13,7 @@
 | 4 · The differentiator | G16–G18 | ✅ **Complete** (G17 partly — see notes) |
 | 5 · Autonomy | G19–G23 | ✅ **Complete** (see notes) |
 | 6 · Corpus | G24–G25 | ✅ **Complete** |
-| 7 · Ship | G26–G29 | Next |
+| 7 · Ship | G26–G29 | ✅ **Complete** (G29 partly — see notes) |
 
 **Speaker bleed is fixed** (G2 finding #2, carried since Phase 0). `EchoSuppressor`
 drops mic lines that are the speakers coming back through the room. Hardware AEC was
@@ -435,21 +435,88 @@ words.
 **Depends on:** G15 · *gated on the export-shape decision*
 **Build:** Notion integration token, database picker, property mapping (title, date, duration, attendees, folder). Export the panel plus optionally the transcript. Store the Notion page ID so re-export updates rather than duplicates. Optional auto-export on meeting completion.
 **Done when:** completing a meeting creates a correctly-propertied Notion page, and regenerating a panel then re-exporting updates that same page instead of creating a second one.
+**Status:** ✅ Built, and the create-then-update round trip is **proven against a
+real HTTP server** standing in for Notion: a second export issues no `POST /v1/pages`,
+patches the same page, and clears the old body *before* writing the new one —
+appending would leave two summaries stacked on one page, which reads worse than a
+duplicate.
+
+Only properties the target database actually has are sent; Notion rejects the whole
+request for one unknown name, so a database without "Duration" would otherwise fail
+outright instead of exporting what it can. The title column is read from the database
+rather than assumed to be "Name". Rich text is chunked at 2000 characters and blocks
+batched at 100 per request — both are hard API limits that reject the entire call.
+
+**Not verified against real Notion:** that needs the user's integration token.
 
 ### G27 · Retention and the privacy surface
 **Depends on:** G6
 **Build:** Background sweeper deleting audio past `audio_expires_at` (default 7 days, configurable, "keep forever" allowed). Manual purge-all-audio. A privacy panel showing which provider generated each panel, since `panels.provider` is stored per generation. Confirm no telemetry anywhere in the build.
 **Done when:** audio older than the window is gone on next launch while transcripts and notes are untouched, and the panel truthfully reports the local-vs-cloud provenance of every generation.
+**Status:** ✅ Done. The sweeper runs at launch; only `audio_path` is cleared, never
+the row, because the transcript is the durable record and the audio is a re-listening
+aid. Three mutations fail the suite: deleting the meeting row, treating a null expiry
+as expired, and ignoring the expiry altogether. A missing file counts as success — an
+interrupted sweep must not leave a row pointing at nothing forever.
+
+"No telemetry" is **checked, not claimed**: a test walks the whole source tree for
+analytics hosts and SDK call shapes. It deliberately does not match the bare word
+"telemetry", because the privacy panel uses that word to say there is none, and a
+check that fires on its own denial is one nobody can keep passing honestly.
+
+**A real bug caught here.** `panels.provider` stores a *display label*
+("LM Studio"), and the first version of the privacy panel matched it against
+snake_case enum names in TypeScript — so **every local generation was reported as
+cloud**, in the one surface whose entire job is telling the truth about where data
+went. Classification now happens in Rust, where the enum lives, and accepts both
+forms so rows written before the fix still classify.
 
 ### G28 · Onboarding
 **Depends on:** G13, G20, G23
 **Build:** First-run flow: permissions → ASR model download → provider choice (including the fully-local path) → optional calendar connect → detection defaults explanation.
 **Done when:** a fresh machine with no keys and no calendar reaches a first successful recording without touching a settings screen.
+**Status:** ✅ Done. Every step is actionable in place — the permission prompt, the
+model download and the provider choice all happen inside first run rather than
+sending the user to a settings screen and hoping they come back.
+
+Progress is **derived from what is true, not counted**: someone who revokes a
+permission halfway through lands back on the step that actually blocks them, not on
+step 4 because a stored number says so. It hides itself for anyone who has already
+recorded something — a returning user with meetings in the library has plainly got
+past setup.
 
 ### G29 · Packaging and release
 **Depends on:** all
 **Build:** Developer ID signing, notarization, hardened runtime with the audio/screen entitlements, DMG, Sparkle updater with an appcast. CI to build and notarize a release.
 **Done when:** the DMG installs on a clean machine with no Gatekeeper warning and successfully auto-updates from the previous version.
+**Status:** ⚠️ **Pipeline built; the done-when cannot be met without your Apple
+Developer credentials.** `security find-identity` reports **0 valid signing
+identities** on this machine, so nothing here can be signed or notarized.
+
+What exists and was verified:
+
+- Hardened-runtime entitlements, with a comment on each explaining why it is needed —
+  microphone, library validation disabled (WhisperKit loads CoreML at runtime), and
+  unsigned executable memory (`llama-server` is downloaded at runtime and is
+  therefore not signed by us; without it the fully-local path dies on a machine where
+  everything else works).
+- **The DMG builds and was mounted and inspected**: 7.7 MB, drag-to-Applications
+  layout, both binaries present. `codesign` reports `adhoc, linker-signed` and
+  `spctl` rejects it — exactly what an unsigned build should do.
+- A release workflow that signs and notarizes when the secrets are present and
+  **warns loudly when they are not**, rather than emitting a half-signed artifact.
+  It runs `codesign --verify` and `spctl --assess` after building, so the claim is
+  checked by the same tool Gatekeeper consults.
+
+**Deviation:** updates use **Tauri's own updater, not Sparkle**. It verifies a
+minisign-signed manifest — the property Sparkle would have been chosen for — and is
+the idiomatic path for a Tauri app rather than a second update system bolted on.
+
+**To finish this yourself:** a Developer ID Application certificate, an app-specific
+password, and `pnpm tauri signer generate` for the update key. Set
+`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,
+`APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` and `TAURI_SIGNING_PRIVATE_KEY` as
+repository secrets, put the public key in `tauri.conf.json`, and push a `v*` tag.
 
 ---
 

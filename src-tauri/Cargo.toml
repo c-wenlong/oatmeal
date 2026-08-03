@@ -20,6 +20,10 @@ tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
 # Start/stop from anywhere, without focusing the app (G19).
 tauri-plugin-global-shortcut = "2"
+# Signed in-place updates. Tauri's own updater rather than Sparkle: it is the
+# idiomatic path for a Tauri app and verifies a minisign-signed manifest, which
+# is the property Sparkle would have been chosen for.
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40.1", features = ["bundled"] }

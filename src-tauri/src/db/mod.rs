@@ -63,6 +63,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "embedding_dim_768",
         sql: include_str!("migrations/0004_embedding_dim_768.sql"),
     },
+    Migration {
+        version: 5,
+        name: "notion_exports",
+        sql: include_str!("migrations/0005_notion_exports.sql"),
+    },
 ];
 
 /// Latest schema version this build knows about.

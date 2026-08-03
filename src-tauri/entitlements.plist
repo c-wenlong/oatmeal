@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Hardened runtime entitlements. Notarization requires the hardened
+       runtime, and the hardened runtime denies these unless asked for. -->
+
+  <!-- Microphone. Without this the app is signed, notarized, and deaf. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+
+  <!-- The Swift sidecar is a separate executable inside the bundle. Under the
+       hardened runtime a signed process will not load a library or spawn a
+       binary that is not signed with the same team id — and WhisperKit loads
+       CoreML models at runtime, which counts. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- `llama-server` (G13) is downloaded at runtime and is therefore not signed
+       by us. Without this the hardened runtime refuses to execute it, and the
+       fully-local path dies on a machine where everything else works. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- Outbound only: LLM providers, Hugging Face, GitHub releases, Notion.
+       No server entitlement — nothing listens except llama-server on
+       loopback, which does not need one. -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+</dict>
+</plist>

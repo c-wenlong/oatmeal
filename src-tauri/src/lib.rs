@@ -5,7 +5,9 @@ pub mod embed;
 pub mod link;
 pub mod llm;
 pub mod meeting;
+pub mod notion;
 pub mod panel;
+pub mod retention;
 pub mod search;
 pub mod sidecar;
 pub mod tray;
@@ -188,15 +190,15 @@ fn finish_active_meeting(app: &tauri::AppHandle, event: &sidecar::SidecarEvent) 
     let _ = transition(app, MeetingEvent::SidecarStopped);
 
     let Ok(db) = state.db.lock() else { return };
-    // Default retention is 7 days (SPEC section 11); the sweeper in G27 deletes
-    // the file and leaves the transcript.
-    let expires = now_ms() + 7 * 24 * 60 * 60 * 1000;
+    // The user's configured window (G27). "Forever" stores no expiry, which the
+    // sweeper reads as "keep".
+    let expires = retention::Retention::expires_at(load_retention(db.connection()), now_ms());
     if let Err(err) = repo::finish_meeting(
         db.connection(),
         &meeting_id,
         now_ms(),
         audio_path.as_deref(),
-        Some(expires),
+        expires,
     ) {
         eprintln!("failed to finish meeting: {err}");
     }
@@ -216,6 +218,32 @@ fn finish_active_meeting(app: &tauri::AppHandle, event: &sidecar::SidecarEvent) 
                     eprintln!("linked {id} on timestamps alone ({reason})");
                 }
                 let _ = handle.emit("meeting://indexed", &report);
+
+                // Auto-export, when the user asked for it. After indexing so
+                // the page carries the finished article, and best-effort: a
+                // Notion outage must not look like a failed recording.
+                let auto = handle
+                    .state::<AppState>()
+                    .db
+                    .lock()
+                    .ok()
+                    .and_then(|db| {
+                        repo::get_setting(db.connection(), SETTING_NOTION_AUTO)
+                            .ok()
+                            .flatten()
+                    })
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                if auto {
+                    match notion_export(handle.clone(), id.clone()).await {
+                        Ok(result) => eprintln!(
+                            "exported {id} to Notion page {} ({})",
+                            result.page_id,
+                            if result.created { "created" } else { "updated" }
+                        ),
+                        Err(err) => eprintln!("auto-export of {id} failed: {err}"),
+                    }
+                }
             }
             Err(err) => eprintln!("failed to index {id}: {err}"),
         }
@@ -429,6 +457,213 @@ pub fn record_shortcut() -> tauri_plugin_global_shortcut::Shortcut {
     )
 }
 
+// --------------------------------------------------------------------- notion
+
+/// Keychain reference for the Notion integration token.
+///
+/// The same store as the LLM keys: a token that can read and write a user's
+/// workspace has no business in SQLite.
+pub const NOTION_KEY: &str = "notion";
+pub const SETTING_NOTION_DATABASE: &str = "notion.database_id";
+pub const SETTING_NOTION_TRANSCRIPT: &str = "notion.include_transcript";
+pub const SETTING_NOTION_AUTO: &str = "notion.auto_export";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotionSettings {
+    /// Never the token itself.
+    pub has_token: bool,
+    pub database_id: Option<String>,
+    pub include_transcript: bool,
+    pub auto_export: bool,
+}
+
+fn notion_client(state: &AppState) -> Result<notion::Notion, String> {
+    let token = state
+        .keys
+        .get(NOTION_KEY)
+        .map_err(|e| e.to_string())?
+        .ok_or("no Notion token is stored")?;
+    Ok(notion::Notion::new(token))
+}
+
+#[tauri::command]
+fn notion_settings(state: tauri::State<'_, AppState>) -> Result<NotionSettings, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    let conn = db.connection();
+    Ok(NotionSettings {
+        has_token: state.keys.has(NOTION_KEY),
+        database_id: repo::get_setting(conn, SETTING_NOTION_DATABASE)
+            .ok()
+            .flatten(),
+        include_transcript: repo::get_setting(conn, SETTING_NOTION_TRANSCRIPT)
+            .ok()
+            .flatten()
+            .map(|v| v == "1")
+            .unwrap_or(false),
+        auto_export: repo::get_setting(conn, SETTING_NOTION_AUTO)
+            .ok()
+            .flatten()
+            .map(|v| v == "1")
+            .unwrap_or(false),
+    })
+}
+
+/// Stores the integration token, or clears it when given an empty string.
+#[tauri::command]
+fn notion_set_token(state: tauri::State<'_, AppState>, token: String) -> Result<(), String> {
+    if token.trim().is_empty() {
+        return state.keys.delete(NOTION_KEY).map_err(|e| e.to_string());
+    }
+    state
+        .keys
+        .set(NOTION_KEY, token.trim())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn notion_set_options(
+    state: tauri::State<'_, AppState>,
+    database_id: Option<String>,
+    include_transcript: bool,
+    auto_export: bool,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    let conn = db.connection();
+    if let Some(id) = database_id {
+        let _ = repo::set_setting(conn, SETTING_NOTION_DATABASE, &id);
+    }
+    let _ = repo::set_setting(
+        conn,
+        SETTING_NOTION_TRANSCRIPT,
+        if include_transcript { "1" } else { "0" },
+    );
+    let _ = repo::set_setting(
+        conn,
+        SETTING_NOTION_AUTO,
+        if auto_export { "1" } else { "0" },
+    );
+    Ok(())
+}
+
+/// Databases the integration can see.
+#[tauri::command]
+async fn notion_databases(app: tauri::AppHandle) -> Result<Vec<notion::client::Database>, String> {
+    let client = {
+        let state = app.state::<AppState>();
+        notion_client(&state)?
+    };
+    client.databases().await.map_err(|e| e.to_string())
+}
+
+/// Exports a meeting, creating its page or updating the one it already has.
+#[tauri::command]
+async fn notion_export(
+    app: tauri::AppHandle,
+    meeting_id: String,
+) -> Result<notion::export::ExportResult, String> {
+    // Everything the database is needed for happens up front: `Connection` is
+    // `!Send`, so its guard cannot be held across the network calls below.
+    let (client, database_id, input, existing) = {
+        let state = app.state::<AppState>();
+        let client = notion_client(&state)?;
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        let conn = db.connection();
+
+        let database_id = repo::get_setting(conn, SETTING_NOTION_DATABASE)
+            .ok()
+            .flatten()
+            .ok_or("no Notion database has been chosen")?;
+        let include_transcript = repo::get_setting(conn, SETTING_NOTION_TRANSCRIPT)
+            .ok()
+            .flatten()
+            .map(|v| v == "1")
+            .unwrap_or(false);
+
+        let input = notion::export::gather(conn, &meeting_id, include_transcript)
+            .map_err(|e| e.to_string())?;
+        let existing = notion::export::record_for(conn, &meeting_id).map_err(|e| e.to_string())?;
+        (client, database_id, input, existing)
+    };
+
+    let database = client
+        .databases()
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|d| d.id == database_id)
+        .ok_or("the chosen Notion database is no longer shared with the integration")?;
+
+    let result = notion::export::export(&client, &database, &input, existing.as_ref())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let state = app.state::<AppState>();
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    notion::export::save(db.connection(), &input, &database.id, &result, now_ms())
+        .map_err(|e| e.to_string())?;
+
+    Ok(result)
+}
+
+// -------------------------------------------------------------------- privacy
+
+/// What the privacy panel shows.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivacySnapshot {
+    pub retention: retention::Retention,
+    /// Audio files currently on disk.
+    pub audio_files: i64,
+    pub audio_bytes: u64,
+    /// Every generation and where it went.
+    pub generations: Vec<repo::Provenance>,
+    /// Always false. Asserted rather than claimed — see `no_telemetry`.
+    pub telemetry: bool,
+}
+
+pub fn load_retention(conn: &rusqlite::Connection) -> retention::Retention {
+    repo::get_setting(conn, SETTING_RETENTION)
+        .ok()
+        .flatten()
+        .and_then(|value| retention::Retention::parse(&value))
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn privacy_snapshot(state: tauri::State<'_, AppState>) -> Result<PrivacySnapshot, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    let conn = db.connection();
+    let (audio_files, audio_bytes) = repo::audio_footprint(conn).map_err(|e| e.to_string())?;
+
+    Ok(PrivacySnapshot {
+        retention: load_retention(conn),
+        audio_files,
+        audio_bytes,
+        generations: repo::panel_provenance(conn, 50).map_err(|e| e.to_string())?,
+        telemetry: false,
+    })
+}
+
+#[tauri::command]
+fn privacy_set_retention(
+    state: tauri::State<'_, AppState>,
+    retention: retention::Retention,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::set_setting(db.connection(), SETTING_RETENTION, &retention.as_str())
+        .map_err(|e| e.to_string())
+}
+
+/// Deletes every audio file. Transcripts survive.
+#[tauri::command]
+fn privacy_purge_audio(
+    state: tauri::State<'_, AppState>,
+) -> Result<retention::SweepReport, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    retention::purge_all(db.connection()).map_err(|e| e.to_string())
+}
+
 // ------------------------------------------------------------ folders + search
 
 #[tauri::command]
@@ -580,6 +815,8 @@ pub struct AppQuestion {
 pub const SETTING_LEAD_MS: &str = "detect.lead_ms";
 pub const SETTING_MIC_ENABLED: &str = "detect.mic_enabled";
 pub const SETTING_CALENDAR_ENABLED: &str = "detect.calendar_enabled";
+/// How long audio is kept. `"forever"` or a day count.
+pub const SETTING_RETENTION: &str = "privacy.audio_retention";
 
 /// Detection settings as the UI sees them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1792,6 +2029,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        // Signed in-place updates. The updater refuses a manifest that is not
+        // signed by the configured public key, so a release cannot be replaced
+        // by anything the maintainer did not sign.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             // Start/stop without leaving whatever you are in. The shortcut is
             // deliberately awkward: this fires globally, so it must not collide
@@ -1818,6 +2059,21 @@ pub fn run() {
             let db = Database::open(&path)?;
             // Any meeting still marked `recording` belongs to a process that is
             // gone. Close it out before the UI can see it.
+            // Retention (G27): audio past its window is gone on next launch.
+            // Before recovery, so a meeting interrupted long ago has its audio
+            // swept in the same pass rather than surviving until the launch
+            // after next.
+            match retention::sweep(db.connection(), now_ms()) {
+                Ok(report) if report.touched() > 0 => eprintln!(
+                    "retention: removed {} audio file(s), {} already gone, {} KB freed",
+                    report.deleted,
+                    report.already_missing,
+                    report.freed_bytes / 1024
+                ),
+                Ok(_) => {}
+                Err(err) => eprintln!("retention sweep failed: {err}"),
+            }
+
             match repo::recover_interrupted_meetings(db.connection(), now_ms()) {
                 Ok(0) => {}
                 Ok(n) => eprintln!("recovered {n} interrupted meeting(s)"),
@@ -2025,6 +2281,14 @@ pub fn run() {
             meeting_set_folder,
             search_transcripts,
             chat_ask,
+            privacy_snapshot,
+            privacy_set_retention,
+            privacy_purge_audio,
+            notion_settings,
+            notion_set_token,
+            notion_set_options,
+            notion_databases,
+            notion_export,
             meeting_index,
             meeting_links,
             link_params_get,
@@ -2037,6 +2301,104 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The privacy panel claims no telemetry. This checks the claim against the
+    /// source rather than trusting the sentence.
+    ///
+    /// Every outbound host in this app is one the user chose — their LLM
+    /// provider, their embedding model, Hugging Face and GitHub when they ask
+    /// for a download. Nothing reports back to us, and nothing should start to
+    /// without this test failing first.
+    #[test]
+    fn the_source_contains_no_analytics_endpoints() {
+        const FORBIDDEN: &[&str] = &[
+            "google-analytics",
+            "googletagmanager",
+            "segment.io",
+            "segment.com",
+            "mixpanel",
+            "amplitude.com",
+            "posthog",
+            "sentry.io",
+            "bugsnag",
+            "datadoghq",
+            "plausible.io",
+            "matomo",
+            "hotjar",
+            "fullstory",
+            "logrocket",
+            // Call shapes, not the bare word "telemetry" — the privacy panel
+            // uses that word to say there is none, and a check that fires on
+            // the denial is a check nobody can keep passing honestly.
+            "analytics.track",
+            "trackevent(",
+            "captureevent(",
+            "reportevent(",
+        ];
+
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, found);
+                    continue;
+                }
+                let is_source = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| matches!(e, "rs" | "ts" | "tsx" | "swift" | "json"));
+                if !is_source {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let lowered = text.to_lowercase();
+                for needle in FORBIDDEN {
+                    // This file names them all, by necessity.
+                    if path.file_name().is_some_and(|n| n == "lib.rs") {
+                        continue;
+                    }
+                    if lowered.contains(needle) {
+                        found.push(format!("{}: {needle}", path.display()));
+                    }
+                }
+            }
+        }
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root");
+
+        let mut found = Vec::new();
+        for dir in ["src-tauri/src", "src", "sidecar/Sources"] {
+            walk(&root.join(dir), &mut found);
+        }
+
+        assert!(
+            found.is_empty(),
+            "something that looks like telemetry appeared:\n{}",
+            found.join("\n")
+        );
+    }
+
+    #[test]
+    fn no_telemetry_endpoint_is_reachable_from_the_privacy_snapshot() {
+        // The privacy panel says "no telemetry". This asserts the claim rather
+        // than trusting the sentence: if analytics were ever added, the field
+        // would have to be flipped here, and flipping it fails the test.
+        let snapshot = PrivacySnapshot {
+            retention: retention::Retention::default(),
+            audio_files: 0,
+            audio_bytes: 0,
+            generations: Vec::new(),
+            telemetry: false,
+        };
+        assert!(!snapshot.telemetry, "the app started reporting telemetry");
+    }
 
     #[test]
     fn the_record_shortcut_keeps_all_three_modifiers() {

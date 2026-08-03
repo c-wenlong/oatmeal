@@ -80,6 +80,22 @@ impl ProviderKind {
     ///
     /// Surfaced per generation so the privacy panel (G27) can report what
     /// actually happened rather than what the app was configured to do.
+    /// Recovers a kind from whatever was stored against a generation.
+    ///
+    /// `panels.provider` holds the *display label* ("LM Studio"), not the enum
+    /// name — so the privacy panel cannot classify a generation by string
+    /// matching in the frontend, and an earlier attempt to do so marked every
+    /// local summary as cloud. Both forms are accepted because rows written
+    /// before this existed carry the label.
+    pub fn from_stored(value: &str) -> Option<Self> {
+        let normalised = value.trim().to_lowercase().replace([' ', '_', '-'], "");
+        Self::all().iter().copied().find(|kind| {
+            let label = kind.label().to_lowercase().replace([' ', '_', '-'], "");
+            let name = format!("{kind:?}").to_lowercase();
+            normalised == name || normalised == label || label.starts_with(&normalised)
+        })
+    }
+
     pub fn is_local(self) -> bool {
         matches!(
             self,

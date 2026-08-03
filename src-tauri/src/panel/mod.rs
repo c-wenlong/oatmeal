@@ -87,7 +87,9 @@ pub async fn generate(
     Ok(Generated {
         content: validated,
         report,
-        provider: config.kind.label().to_string(),
+        // The enum name, not the label: this is read back by the privacy panel
+        // to classify local versus cloud, and a display string is a lossy key.
+        provider: format!("{:?}", config.kind).to_lowercase(),
         model: config.model.clone(),
     })
 }

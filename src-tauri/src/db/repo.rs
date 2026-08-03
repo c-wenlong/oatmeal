@@ -686,6 +686,86 @@ pub fn meeting_links(conn: &Connection, meeting_id: &str) -> Result<Vec<StoredLi
     Ok(out)
 }
 
+// -------------------------------------------------------------------- privacy
+
+/// One generation, and where it was sent.
+///
+/// `panels.provider` is stored per generation on purpose (G3): a user who tried
+/// a cloud model once and then switched to local needs to know which of their
+/// summaries left the machine, and an app-level "current provider" setting
+/// cannot answer that.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Provenance {
+    pub panel_id: String,
+    pub meeting_id: String,
+    pub meeting_title: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub generated_at: i64,
+    /// Whether this generation stayed on the machine.
+    ///
+    /// Decided here rather than in the frontend: the mapping lives with the
+    /// enum, and string-matching a display label across the IPC boundary is how
+    /// every local summary once came back marked "cloud".
+    pub local: bool,
+}
+
+pub fn panel_provenance(conn: &Connection, limit: i64) -> Result<Vec<Provenance>> {
+    let mut stmt = conn.prepare(
+        "SELECT p.id, p.meeting_id, m.title, p.provider, p.model, p.generated_at
+         FROM panels p
+         JOIN meetings m ON m.id = p.meeting_id
+         ORDER BY p.generated_at DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit], |row| {
+        Ok(Provenance {
+            panel_id: row.get(0)?,
+            meeting_id: row.get(1)?,
+            meeting_title: row.get(2)?,
+            provider: row.get::<_, Option<String>>(3)?,
+            model: row.get(4)?,
+            generated_at: row.get(5)?,
+            local: false,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let mut entry: Provenance = row?;
+        entry.local = entry
+            .provider
+            .as_deref()
+            .and_then(crate::llm::provider::ProviderKind::from_stored)
+            // An unrecognised provider is treated as cloud. Guessing "local"
+            // about something we cannot identify would tell the user their
+            // transcript stayed put when it may not have.
+            .map(|kind| kind.is_local())
+            .unwrap_or(false);
+        out.push(entry);
+    }
+    Ok(out)
+}
+
+/// How much audio is on disk, for the privacy panel.
+pub fn audio_footprint(conn: &Connection) -> Result<(i64, u64)> {
+    let mut stmt = conn.prepare("SELECT audio_path FROM meetings WHERE audio_path IS NOT NULL")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+
+    let mut count = 0i64;
+    let mut bytes = 0u64;
+    for row in rows {
+        let path = row?;
+        count += 1;
+        // A row pointing at a missing file still counts as zero bytes rather
+        // than failing the whole query — the sweeper will clear it.
+        if let Ok(meta) = std::fs::metadata(&path) {
+            bytes += meta.len();
+        }
+    }
+    Ok((count, bytes))
+}
+
 // -------------------------------------------------------------------- folders
 
 #[derive(Debug, Clone, Serialize)]
@@ -1944,5 +2024,69 @@ mod tests {
         let headers = meeting_headers(conn, &["m1".to_string(), "gone".to_string()]).unwrap();
         assert_eq!(headers.len(), 1);
         assert_eq!(headers["m1"].1, 5);
+    }
+
+    #[test]
+    fn provenance_marks_a_local_generation_as_local() {
+        // The bug this pins: `panels.provider` stores a display label, and an
+        // earlier frontend matched it against snake_case enum names — so every
+        // local summary came back marked "cloud", in the one surface whose
+        // entire job is telling the truth about where data went.
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        insert_meeting(conn, "m1", "Standup", 0).unwrap();
+        ensure_builtin_templates(conn, &[("t", "T", "p")], 0).unwrap();
+
+        insert_panel(conn, "p1", "m1", "t", "{}", "", "ollama", "gemma", 1).unwrap();
+        insert_panel(conn, "p2", "m1", "t", "{}", "", "anthropic", "claude", 2).unwrap();
+
+        let rows = panel_provenance(conn, 10).unwrap();
+        let ollama = rows.iter().find(|r| r.panel_id == "p1").unwrap();
+        let anthropic = rows.iter().find(|r| r.panel_id == "p2").unwrap();
+
+        assert!(ollama.local, "a local generation was reported as cloud");
+        assert!(!anthropic.local, "a cloud generation was reported as local");
+    }
+
+    #[test]
+    fn provenance_understands_rows_written_before_the_fix() {
+        // Older rows carry the display label. They still have to classify.
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        insert_meeting(conn, "m1", "Standup", 0).unwrap();
+        ensure_builtin_templates(conn, &[("t", "T", "p")], 0).unwrap();
+
+        insert_panel(conn, "p1", "m1", "t", "{}", "", "LM Studio", "m", 1).unwrap();
+        insert_panel(
+            conn,
+            "p2",
+            "m1",
+            "t",
+            "{}",
+            "",
+            "Bundled (llama.cpp)",
+            "m",
+            2,
+        )
+        .unwrap();
+        insert_panel(conn, "p3", "m1", "t", "{}", "", "OpenAI", "gpt", 3).unwrap();
+
+        let rows = panel_provenance(conn, 10).unwrap();
+        assert!(rows.iter().find(|r| r.panel_id == "p1").unwrap().local);
+        assert!(rows.iter().find(|r| r.panel_id == "p2").unwrap().local);
+        assert!(!rows.iter().find(|r| r.panel_id == "p3").unwrap().local);
+    }
+
+    #[test]
+    fn an_unrecognised_provider_is_treated_as_cloud() {
+        // Guessing "local" about something we cannot identify would tell the
+        // user their transcript stayed put when it may not have.
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        insert_meeting(conn, "m1", "Standup", 0).unwrap();
+        ensure_builtin_templates(conn, &[("t", "T", "p")], 0).unwrap();
+        insert_panel(conn, "p1", "m1", "t", "{}", "", "some-new-thing", "m", 1).unwrap();
+
+        assert!(!panel_provenance(conn, 10).unwrap()[0].local);
     }
 }

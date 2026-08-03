@@ -30,6 +30,12 @@ import type {
   Folder,
   SearchResponse,
   ChatReply,
+  PrivacySnapshot,
+  Retention,
+  SweepReport,
+  NotionDatabase,
+  NotionSettings,
+  ExportResult,
 } from "../types";
 import type { PermissionsSnapshot } from "./permissions";
 
@@ -363,4 +369,51 @@ export function chatAsk(
   folderId: string | null,
 ): Promise<ChatReply> {
   return invoke<ChatReply>("chat_ask", { question, meetingId, folderId });
+}
+
+// -------------------------------------------------------------------- privacy
+
+export function privacySnapshot(): Promise<PrivacySnapshot> {
+  return invoke<PrivacySnapshot>("privacy_snapshot");
+}
+
+export function privacySetRetention(retention: Retention): Promise<void> {
+  return invoke<void>("privacy_set_retention", { retention });
+}
+
+/** Deletes every audio file. Transcripts survive. */
+export function privacyPurgeAudio(): Promise<SweepReport> {
+  return invoke<SweepReport>("privacy_purge_audio");
+}
+
+// --------------------------------------------------------------------- notion
+
+export function notionSettings(): Promise<NotionSettings> {
+  return invoke<NotionSettings>("notion_settings");
+}
+
+/** Stores the integration token, or clears it with an empty string. */
+export function notionSetToken(token: string): Promise<void> {
+  return invoke<void>("notion_set_token", { token });
+}
+
+export function notionSetOptions(
+  databaseId: string | null,
+  includeTranscript: boolean,
+  autoExport: boolean,
+): Promise<void> {
+  return invoke<void>("notion_set_options", {
+    databaseId,
+    includeTranscript,
+    autoExport,
+  });
+}
+
+export function notionDatabases(): Promise<NotionDatabase[]> {
+  return invoke<NotionDatabase[]>("notion_databases");
+}
+
+/** Creates the meeting's page, or updates the one it already has. */
+export function notionExport(meetingId: string): Promise<ExportResult> {
+  return invoke<ExportResult>("notion_export", { meetingId });
 }

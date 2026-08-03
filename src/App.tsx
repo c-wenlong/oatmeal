@@ -8,6 +8,9 @@ import { DetectionPopup } from "./components/DetectionPopup";
 import { DetectionSettingsPanel } from "./components/DetectionSettings";
 import { SearchCard } from "./components/SearchCard";
 import { ChatCard } from "./components/ChatCard";
+import { PrivacyCard } from "./components/PrivacyCard";
+import { NotionCard } from "./components/NotionCard";
+import { Onboarding } from "./components/Onboarding";
 
 /**
  * Which window this is.
@@ -62,6 +65,9 @@ function App() {
       {/* Recording first — it is what the app is for. Then the pre-flight that
           gates it, then the diagnostics. The sidecar log grows without bound, so
           it sits below anything that needs to stay glanceable. */}
+      {/* First run, above everything: someone who cannot record yet has no use
+          for the cards below it. Renders nothing once setup is done. */}
+      <Onboarding />
       <RecordCard />
       {/* Search and Ask sit directly under the recording surface: they are what
           the corpus is *for*, and burying them under diagnostics would say the
@@ -69,6 +75,8 @@ function App() {
       <SearchCard onReveal={reveal} />
       <ChatCard onReveal={reveal} />
       <DetectionSettingsPanel />
+      <NotionCard />
+      <PrivacyCard />
       <PermissionsCard />
       <ProviderCard />
       <HealthCard />

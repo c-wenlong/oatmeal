@@ -1050,3 +1050,17 @@ input:focus {
   margin: 0 0 8px;
   line-height: 1.5;
 }
+
+.privacy-heading {
+  margin: 16px 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+/* First run sits above the app and should read as a guide, not a card among
+   cards. */
+.onboarding {
+  border-color: var(--accent);
+}
