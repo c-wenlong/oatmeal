@@ -8,6 +8,7 @@
 //! help?" is otherwise unanswerable. Link quality is a tuning problem, and a
 //! tuning problem without a baseline is just an opinion.
 
+pub mod bench;
 pub mod eval;
 pub mod pipeline;
 

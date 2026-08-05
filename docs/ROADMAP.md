@@ -106,6 +106,26 @@ corpus* and nothing about real meetings — G17's done-when is unchanged. Notion
 Google Calendar, EventKit, code signing and the menu bar item remain unverified for
 the reasons recorded against their own goals.
 
+### 2026-08-06 — the semantic layer, on 25 real meetings
+
+`link::bench`, run against a real Granola corpus exported from Notion: 25 meetings,
+576 note bullets, 4,596 transcript lines. Chance 4.6%.
+
+| Embedder | top-1 | top-5 |
+|---|---|---|
+| bag-of-words stand-in (what the fixture uses) | 41.1% | 67.4% |
+| `nomic-embed-text:v1.5` (what ships) | **90.1%** | **96.9%** |
+
+The metric is meeting attribution — does a note's nearest transcript line come from
+the meeting it was taken in — chosen because that label already exists and so nothing
+has to be hand-labelled or can be tuned to fit.
+
+**The corpus is not in this repo and must never be.** It is real meeting data; the
+benchmark reads a path from `OATMEAL_BENCH_CORPUS`. See G17 for what this does and
+does not settle — in short, it establishes that the semantic layer works on real
+language, and settles nothing about the temporal layer, which the corpus cannot test
+because it carries no timestamps.
+
 ---
 
 ## Decision gates
@@ -282,9 +302,22 @@ what each note refers to. What exists instead:
   shipped default is α=0.3 — the centre of the plateau, not the edge of a spike.
   `weighting_curve` (ignored) prints the whole curve.
 - **The fixture is a harness, not evidence.** It uses a bag-of-words stand-in
-  embedder and cases the author wrote. Feeding real meetings through `evaluate()` is
-  a matter of loading rows instead of literals — that is the work still outstanding,
-  and it is yours to do.
+  embedder and cases the author wrote.
+- **The semantic layer is now measured on real meetings** (`link::bench`, added
+  2026-08-06). 25 real meetings — 576 note bullets against 4,596 transcript lines —
+  scored by whether a note's nearest line comes from the meeting it was taken in.
+  That label is free, so nothing is hand-labelled and nothing can be tuned to fit.
+  Chance is 4.6%. **The real embedder scores 90.1% top-1 / 96.9% top-5; the
+  bag-of-words stand-in scores 41.1% / 67.4%.** Two conclusions: the semantic layer
+  works on real meeting language, and the fixture *understates* production by better
+  than a factor of two rather than flattering it.
+- **What the benchmark still does not settle.** Attribution is a proxy — picking the
+  right *line within* a meeting is the actual job, and a note can find the right
+  meeting and the wrong line in it. The corpus is Granola's AI-written summary
+  bullets: clean full sentences, the easy case, not the shorthand people type. And it
+  carries **no timestamps on either side**, so the temporal layer is untouched and the
+  timestamp-only baseline cannot even be computed against it. Ten meetings recorded
+  *in Oatmeal* remain the only way to close the done-when, and that is yours to do.
 
 ### G18 · Linking UI and tuning
 **Depends on:** G17
