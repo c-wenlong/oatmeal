@@ -36,6 +36,8 @@ import type {
   NotionDatabase,
   NotionSettings,
   ExportResult,
+  GcalSettings,
+  FlowOutcome,
 } from "../types";
 import type { PermissionsSnapshot } from "./permissions";
 
@@ -416,4 +418,28 @@ export function notionDatabases(): Promise<NotionDatabase[]> {
 /** Creates the meeting's page, or updates the one it already has. */
 export function notionExport(meetingId: string): Promise<ExportResult> {
   return invoke<ExportResult>("notion_export", { meetingId });
+}
+
+// ------------------------------------------------------------ google calendar
+
+export function gcalSettings(): Promise<GcalSettings> {
+  return invoke<GcalSettings>("gcal_settings");
+}
+
+/** The user's own OAuth client id. Not a secret for an installed app. */
+export function gcalSetClientId(clientId: string): Promise<void> {
+  return invoke<void>("gcal_set_client_id", { clientId });
+}
+
+export function gcalSetEnabled(enabled: boolean): Promise<void> {
+  return invoke<void>("gcal_set_enabled", { enabled });
+}
+
+/** Opens the browser and waits for the redirect. Resolves when the flow ends. */
+export function gcalConnect(): Promise<FlowOutcome> {
+  return invoke<FlowOutcome>("gcal_connect");
+}
+
+export function gcalDisconnect(): Promise<void> {
+  return invoke<void>("gcal_disconnect");
 }

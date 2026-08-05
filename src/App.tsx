@@ -9,6 +9,7 @@ import { DetectionSettingsPanel } from "./components/DetectionSettings";
 import { SearchCard } from "./components/SearchCard";
 import { ChatCard } from "./components/ChatCard";
 import { PrivacyCard } from "./components/PrivacyCard";
+import { GoogleCalendarCard } from "./components/GoogleCalendarCard";
 import { NotionCard } from "./components/NotionCard";
 import { Onboarding } from "./components/Onboarding";
 
@@ -75,6 +76,7 @@ function App() {
       <SearchCard onReveal={reveal} />
       <ChatCard onReveal={reveal} />
       <DetectionSettingsPanel />
+      <GoogleCalendarCard />
       <NotionCard />
       <PrivacyCard />
       <PermissionsCard />

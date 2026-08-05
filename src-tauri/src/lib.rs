@@ -2,6 +2,7 @@ pub mod chat;
 pub mod db;
 pub mod detect;
 pub mod embed;
+pub mod gcal;
 pub mod link;
 pub mod llm;
 pub mod meeting;
@@ -94,6 +95,11 @@ pub struct AppState {
     /// Calendar events already offered, so a five-minute poll does not re-raise
     /// a meeting the user has dismissed.
     pub offered_events: Mutex<Vec<String>>,
+    /// Google Calendar over OAuth, for calendars macOS does not sync.
+    ///
+    /// Additive: EventKit stays the default, and turning this off leaves
+    /// detection exactly as it was.
+    pub gcal: gcal::Connection,
     /// An app awaiting its one-time "always or never" answer.
     ///
     /// Held rather than only emitted, for the same reason permissions are
@@ -457,6 +463,162 @@ pub fn record_shortcut() -> tauri_plugin_global_shortcut::Shortcut {
     )
 }
 
+// ------------------------------------------------------------- google calendar
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcalSettings {
+    /// Whether a refresh token is stored. Not whether it still works — that is
+    /// only knowable by using it.
+    pub connected: bool,
+    pub client_id: Option<String>,
+    pub enabled: bool,
+}
+
+fn gcal_client_id(conn: &rusqlite::Connection) -> Option<String> {
+    repo::get_setting(conn, SETTING_GCAL_CLIENT_ID)
+        .ok()
+        .flatten()
+        .filter(|id| !id.trim().is_empty())
+}
+
+#[tauri::command]
+fn gcal_settings(state: tauri::State<'_, AppState>) -> Result<GcalSettings, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    let conn = db.connection();
+    Ok(GcalSettings {
+        connected: state.gcal.is_connected(state.keys.as_ref()),
+        client_id: gcal_client_id(conn),
+        enabled: repo::get_setting(conn, SETTING_GCAL_ENABLED)
+            .ok()
+            .flatten()
+            .map(|v| v == "1")
+            .unwrap_or(false),
+    })
+}
+
+#[tauri::command]
+fn gcal_set_client_id(state: tauri::State<'_, AppState>, client_id: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::set_setting(db.connection(), SETTING_GCAL_CLIENT_ID, client_id.trim())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn gcal_set_enabled(state: tauri::State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::set_setting(
+        db.connection(),
+        SETTING_GCAL_ENABLED,
+        if enabled { "1" } else { "0" },
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Runs the whole OAuth flow: opens the browser, catches the redirect,
+/// redeems the code.
+///
+/// On a blocking thread — the loopback listener is a plain `TcpListener`, and
+/// the flow is one linear sequence that reads far worse split across an async
+/// boundary for no gain.
+#[tauri::command]
+async fn gcal_connect(app: tauri::AppHandle) -> Result<gcal::connection::FlowOutcome, String> {
+    let (client_id, http) = {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        let client_id = gcal_client_id(db.connection()).ok_or(
+            "no Google OAuth client id is set — create a Desktop app client in Google \
+             Cloud Console and paste its id",
+        )?;
+        (client_id, state.http.clone())
+    };
+
+    let for_exchange = client_id.clone();
+    let tokens = tauri::async_runtime::spawn_blocking(move || {
+        gcal::connection::authorize(
+            &client_id,
+            |url| {
+                tauri_plugin_opener::open_url(url, None::<&str>)
+                    .map_err(|e| format!("could not open the browser: {e}"))
+            },
+            |code, verifier, redirect_uri| {
+                tauri::async_runtime::block_on(gcal::token::exchange(
+                    &http,
+                    &for_exchange,
+                    code,
+                    verifier,
+                    redirect_uri,
+                    now_ms(),
+                ))
+            },
+        )
+    })
+    .await
+    .map_err(|e| format!("the authorization thread failed: {e}"))?;
+
+    match tokens {
+        Ok(tokens) => {
+            let state = app.state::<AppState>();
+            state
+                .gcal
+                .adopt(state.keys.as_ref(), tokens)
+                .map_err(|e| e.to_string())?;
+            Ok(gcal::connection::FlowOutcome {
+                connected: true,
+                reason: None,
+            })
+        }
+        Err(err) => Ok(gcal::connection::FlowOutcome {
+            connected: false,
+            reason: Some(err.to_string()),
+        }),
+    }
+}
+
+/// Upcoming Google events, or an explanation.
+///
+/// Returns early when the source is switched off so a disconnected user pays
+/// nothing for the poll.
+async fn gcal_upcoming(app: &tauri::AppHandle) -> Result<Vec<detect::CalendarEvent>, String> {
+    let (client_id, enabled, http) = {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        let conn = db.connection();
+        let enabled = repo::get_setting(conn, SETTING_GCAL_ENABLED)
+            .ok()
+            .flatten()
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        (gcal_client_id(conn), enabled, state.http.clone())
+    };
+
+    if !enabled {
+        return Ok(Vec::new());
+    }
+    let client_id = client_id.ok_or("not connected: no client id")?;
+
+    let state = app.state::<AppState>();
+    state
+        .gcal
+        .upcoming(
+            &http,
+            state.keys.as_ref(),
+            &client_id,
+            now_ms(),
+            24 * 60 * 60 * 1000,
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn gcal_disconnect(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state
+        .gcal
+        .disconnect(state.keys.as_ref())
+        .map_err(|e| e.to_string())
+}
+
 // --------------------------------------------------------------------- notion
 
 /// Keychain reference for the Notion integration token.
@@ -817,6 +979,12 @@ pub const SETTING_MIC_ENABLED: &str = "detect.mic_enabled";
 pub const SETTING_CALENDAR_ENABLED: &str = "detect.calendar_enabled";
 /// How long audio is kept. `"forever"` or a day count.
 pub const SETTING_RETENTION: &str = "privacy.audio_retention";
+/// The user's own Google OAuth client id. Not a secret — Google documents it
+/// as inapplicable-to-confidential for installed apps — so it lives in
+/// settings rather than the Keychain.
+pub const SETTING_GCAL_CLIENT_ID: &str = "gcal.client_id";
+/// Whether the Google calendar source is switched on.
+pub const SETTING_GCAL_ENABLED: &str = "gcal.enabled";
 
 /// Detection settings as the UI sees them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2118,6 +2286,7 @@ pub fn run() {
                 recording_since: Mutex::new(None),
                 candidates: Mutex::new(detect::Queue::new()),
                 offered_events: Mutex::new(Vec::new()),
+                gcal: gcal::Connection::new(),
                 pending_question: Mutex::new(None),
                 last_permissions: Mutex::new(None),
                 link_params: Mutex::new(link::LinkParams::default()),
@@ -2144,6 +2313,28 @@ pub fn run() {
                         }
                     });
                 }
+            }
+
+            // Google Calendar, when connected and switched on. A separate poll
+            // from EventKit's because it lives in Rust rather than the sidecar;
+            // both feed the same queue, and the dedup there is what keeps one
+            // meeting from producing two offers.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(300));
+                    let events = tauri::async_runtime::block_on(gcal_upcoming(&handle));
+                    match events {
+                        Ok(events) if !events.is_empty() => {
+                            on_calendar_events(&handle, &events);
+                        }
+                        Ok(_) => {}
+                        // Not shouted about on a loop: "not connected" is the
+                        // ordinary state for most users.
+                        Err(err) if err.contains("not connected") => {}
+                        Err(err) => eprintln!("google calendar poll failed: {err}"),
+                    }
+                });
             }
 
             // Expires unanswered offers. Sharing the tray's timer would couple
@@ -2289,6 +2480,11 @@ pub fn run() {
             notion_set_options,
             notion_databases,
             notion_export,
+            gcal_settings,
+            gcal_set_client_id,
+            gcal_set_enabled,
+            gcal_connect,
+            gcal_disconnect,
             meeting_index,
             meeting_links,
             link_params_get,

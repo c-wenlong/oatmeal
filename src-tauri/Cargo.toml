@@ -40,6 +40,11 @@ reqwest = { version = "0.12", default-features = false, features = [
   "stream",
 ] }
 futures-util = "0.3"
+# PKCE: an S256 challenge and a base64url-encoded verifier. Both are specified
+# exactly by RFC 7636, so these are the primitives rather than a choice.
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
 # llama.cpp ships macOS builds as .tar.gz. Extracted in-process rather than by
 # shelling out to `tar`, so the failure modes are typed instead of an exit code.
 flate2 = "1"

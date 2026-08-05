@@ -316,6 +316,47 @@ the sidecar stays a dumb reader. All-day entries are dropped outright.
 **Not verified end to end:** EventKit needs the user to grant calendar access, and
 the prompt only appears for a bundled app. The fetch and heuristic are tested; the
 grant is yours to give.
+
+### G20b · Google Calendar over OAuth (added after Phase 7)
+
+Built on request, as an **addition** to EventKit rather than a replacement: a
+calendar already in Calendar.app needs no account and no token, and that path stays
+the default. This covers the case EventKit cannot reach.
+
+**PKCE with a loopback redirect, and no client secret.** Google documents the secret
+as inapplicable to installed apps, and PKCE replaces what it was doing — the app
+proves it started the flow by producing the pre-image of a hash it sent earlier, so
+nothing confidential ships in the binary. What ships is the user's own client *id*.
+
+Three security properties, each with a test that fails when it is removed:
+
+- **The `state` check.** Without it, anything able to reach the loopback port could
+  hand back an authorization code from a different account and it would be redeemed.
+  A test drives exactly that attack and asserts the exchange never runs.
+- **An empty state never matches**, so a missing value cannot pass the check.
+- **The code never reaches the browser page.** Putting it in the HTML would leave it
+  in the page source and in browser history.
+
+Also: the listener binds `127.0.0.1` only (never `0.0.0.0`), the scope is
+`calendar.events.readonly` rather than the broader `calendar.readonly`, and the
+refresh token goes to the Keychain while the access token stays in memory.
+
+**A real bug found by a slow test.** `accept()` blocks until something connects, so
+the timeout was only consulted *between* connections — a user who closed the browser
+mid-flow would have left the app waiting forever on a bound port. The test that
+caught it now asserts the timeout is honoured promptly.
+
+**Notion OAuth was investigated and rejected.** Their token exchange requires a
+`client_secret` over HTTP Basic and PKCE is not supported, so a desktop app would
+have to either ship an extractable secret or route every export through a proxy —
+the second contradicts the promise the privacy panel makes. The integration token
+stays until Notion supports PKCE.
+
+**Shipping constraint you should know about:** `calendar.events.readonly` is a
+sensitive scope. Publishing needs Google verification (brand review plus data-access
+review, a justification video, a privacy policy and a verified domain). In Testing
+mode it works but caps users, shows an unverified-app warning, and limits refresh
+token lifetime.
 **Build:** Google Calendar + Microsoft Graph OAuth, **read-only**, tokens in Keychain. Poll every ~5 min into `calendar_events`. Meeting-shaped heuristic: has a conferencing URL, or ≥2 attendees, or an explicit location. Skippable during onboarding — the app must work fully without it.
 **Done when:** today's events appear in-app within 5 minutes of being created in Google Calendar, and revoking access degrades gracefully to manual + mic detection.
 

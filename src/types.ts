@@ -421,3 +421,17 @@ export interface ExportResult {
   created: boolean;
   blocks: number;
 }
+
+/** Mirrors `GcalSettings` in src-tauri/src/lib.rs. */
+export interface GcalSettings {
+  /** Whether a refresh token is stored — not whether it still works. */
+  connected: boolean;
+  clientId: string | null;
+  enabled: boolean;
+}
+
+/** Mirrors `FlowOutcome` in src-tauri/src/gcal/connection.rs. */
+export interface FlowOutcome {
+  connected: boolean;
+  reason: string | null;
+}
