@@ -111,10 +111,7 @@ pub fn chance(owners: &[usize], note_owners: &[usize]) -> f32 {
 ///
 /// Kept free of embedding and I/O so the scoring rule itself is testable with
 /// hand-written vectors.
-pub fn attribute(
-    notes: &[(usize, Vec<f32>)],
-    lines: &[(usize, Vec<f32>)],
-) -> Attribution {
+pub fn attribute(notes: &[(usize, Vec<f32>)], lines: &[(usize, Vec<f32>)]) -> Attribution {
     let mut result = Attribution::default();
     for (owner, note) in notes {
         if lines.is_empty() {
@@ -158,8 +155,19 @@ pub async fn embed_all<E: Embedder>(
     Ok(out)
 }
 
+/// Texts paired with the index of the meeting they came from.
+///
+/// That index is the entire ground truth of this benchmark, so it travels with
+/// the text everywhere rather than being tracked alongside it — a reordering
+/// that silently separated the two would produce a plausible score that means
+/// nothing.
+pub type Owned = Vec<(usize, String)>;
+
+/// The same pairing after embedding.
+pub type Embedded = Vec<(usize, Vec<f32>)>;
+
 /// Flattens the corpus into (owning meeting, text) pairs.
-pub fn flatten(corpus: &Corpus) -> (Vec<(usize, String)>, Vec<(usize, String)>) {
+pub fn flatten(corpus: &Corpus) -> (Owned, Owned) {
     let mut notes = Vec::new();
     let mut lines = Vec::new();
     for (index, meeting) in corpus.meetings.iter().enumerate() {
@@ -172,19 +180,19 @@ pub fn flatten(corpus: &Corpus) -> (Vec<(usize, String)>, Vec<(usize, String)>) 
 /// Embeds both sides and scores them.
 pub async fn run<E: Embedder>(embedder: &E, corpus: &Corpus) -> Result<Attribution, EmbedError> {
     let (notes, lines) = flatten(corpus);
-    let note_vectors = embed_all(embedder, &notes.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>()).await?;
-    let line_vectors = embed_all(embedder, &lines.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>()).await?;
+    let note_vectors = embed_all(
+        embedder,
+        &notes.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(),
+    )
+    .await?;
+    let line_vectors = embed_all(
+        embedder,
+        &lines.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(),
+    )
+    .await?;
 
-    let notes: Vec<(usize, Vec<f32>)> = notes
-        .iter()
-        .map(|(o, _)| *o)
-        .zip(note_vectors)
-        .collect();
-    let lines: Vec<(usize, Vec<f32>)> = lines
-        .iter()
-        .map(|(o, _)| *o)
-        .zip(line_vectors)
-        .collect();
+    let notes: Embedded = notes.iter().map(|(o, _)| *o).zip(note_vectors).collect();
+    let lines: Embedded = lines.iter().map(|(o, _)| *o).zip(line_vectors).collect();
 
     Ok(attribute(&notes, &lines))
 }
@@ -314,7 +322,11 @@ mod tests {
         struct Counting(AtomicUsize);
         impl Embedder for Counting {
             async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
-                assert!(texts.len() <= BATCH, "batch of {} exceeds {BATCH}", texts.len());
+                assert!(
+                    texts.len() <= BATCH,
+                    "batch of {} exceeds {BATCH}",
+                    texts.len()
+                );
                 self.0.fetch_add(1, Ordering::SeqCst);
                 Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
             }
