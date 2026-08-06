@@ -16,7 +16,12 @@ jobs:
   release:
     # Apple Silicon only, per SPEC section 2 — and the sidecar links against
     # arm64 CoreML, so a cross build would not produce a usable binary.
-    runs-on: macos-14
+    # macos-15, not macos-14: the sidecar's Package.swift declares
+    # swift-tools-version 6.0 (for the `swiftLanguageMode` manifest API — the
+    # code itself is Swift 5), and the macos-14 image ships Swift 5.10, which
+    # refuses to parse the manifest at all. macos-15 is still Apple Silicon,
+    # which the sidecar requires for arm64 CoreML.
+    runs-on: macos-15
     permissions:
       contents: write
 
@@ -46,6 +51,16 @@ jobs:
           cargo --version
           echo "signing configured: $HAS_SIGNING"
           echo "updater key configured: $HAS_UPDATER_KEY"
+
+          # Fail here with a sentence that names the problem, rather than four
+          # steps later with SwiftPM's "package is using Swift tools version
+          # 6.0.0 but the installed version is 5.10.0" — which reads like the
+          # package is wrong when it is the runner image that is behind.
+          MAJOR=$(swift --version 2>&1 | sed -n 's/.*Apple Swift version \([0-9]*\).*/\1/p' | head -1)
+          if [ "${MAJOR:-0}" -lt 6 ]; then
+            echo "::error::Swift $MAJOR on this runner, but sidecar/Package.swift needs 6.0+. Use a newer macos-* image."
+            exit 1
+          fi
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
