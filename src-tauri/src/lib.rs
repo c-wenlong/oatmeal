@@ -12,6 +12,7 @@ pub mod retention;
 pub mod search;
 pub mod sidecar;
 pub mod tray;
+pub mod update;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -2192,6 +2193,80 @@ fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
     tauri::generate_context!()
 }
 
+/// Asks GitHub whether anything newer exists.
+///
+/// Returns rather than throws when the check simply fails: a laptop on a train
+/// should not show an error card, and an update check is never the reason to
+/// interrupt someone. Genuine misconfiguration — an absent public key — is a
+/// different matter and is reported.
+#[tauri::command]
+async fn update_check(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<update::UpdateStatus, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let current_version = app.package_info().version.to_string();
+    let skipped = {
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        repo::get_setting(db.connection(), update::SETTING_SKIPPED_VERSION)
+            .map_err(|e| e.to_string())?
+    };
+
+    let found = app
+        .updater()
+        .map_err(|e| format!("the updater is not configured: {e}"))?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let (available_version, notes) = match &found {
+        Some(update) => (Some(update.version.clone()), update.body.clone()),
+        None => (None, None),
+    };
+
+    Ok(update::UpdateStatus {
+        decision: update::decide(available_version.as_deref(), skipped.as_deref()),
+        current_version,
+        available_version,
+        notes,
+    })
+}
+
+/// Downloads the new bundle, swaps it in, and restarts.
+///
+/// Checks again rather than holding the handle from `update_check`: the handle
+/// borrows the app and would have to be parked in shared state for what is a
+/// single extra HTTP round trip on an action the user just clicked.
+#[tauri::command]
+async fn update_install(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let update = app
+        .updater()
+        .map_err(|e| format!("the updater is not configured: {e}"))?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("there is nothing newer to install")?;
+
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Never returns.
+    app.restart();
+}
+
+/// Remembers that the user does not want to hear about this exact version.
+#[tauri::command]
+fn update_skip(state: tauri::State<'_, AppState>, version: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::set_setting(db.connection(), update::SETTING_SKIPPED_VERSION, &version)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2488,7 +2563,10 @@ pub fn run() {
             meeting_index,
             meeting_links,
             link_params_get,
-            link_params_set
+            link_params_set,
+            update_check,
+            update_install,
+            update_skip
         ])
         .run(app_context())
         .expect("error while running tauri application");

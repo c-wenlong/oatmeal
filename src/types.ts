@@ -435,3 +435,14 @@ export interface FlowOutcome {
   connected: boolean;
   reason: string | null;
 }
+
+/** Mirrors `Decision` in src-tauri/src/update/mod.rs. */
+export type UpdateDecision = "up_to_date" | "skipped" | "offer";
+
+/** Mirrors `UpdateStatus` in src-tauri/src/update/mod.rs. */
+export interface UpdateStatus {
+  currentVersion: string;
+  availableVersion: string | null;
+  notes: string | null;
+  decision: UpdateDecision;
+}

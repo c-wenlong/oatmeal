@@ -38,6 +38,7 @@ import type {
   ExportResult,
   GcalSettings,
   FlowOutcome,
+  UpdateStatus,
 } from "../types";
 import type { PermissionsSnapshot } from "./permissions";
 
@@ -442,4 +443,19 @@ export function gcalConnect(): Promise<FlowOutcome> {
 
 export function gcalDisconnect(): Promise<void> {
   return invoke<void>("gcal_disconnect");
+}
+
+// ------------------------------------------------------------------- updates
+
+export function updateCheck(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>("update_check");
+}
+
+/** Downloads, swaps the bundle, and restarts. Does not return on success. */
+export function updateInstall(): Promise<void> {
+  return invoke<void>("update_install");
+}
+
+export function updateSkip(version: string): Promise<void> {
+  return invoke<void>("update_skip", { version });
 }

@@ -618,6 +618,26 @@ What exists and was verified:
 minisign-signed manifest — the property Sparkle would have been chosen for — and is
 the idiomatic path for a Tauri app rather than a second update system bolted on.
 
+**The updater was finished on 2026-08-06**, and the scaffolding it was built on turned
+out to have three defects that all failed *silently*:
+
+- The endpoint pointed at `github.com/kaichen/oatmeal`; the repository is
+  `c-wenlong/oatmeal`. Every check would have 404'd forever.
+- `pubkey` was an empty string, so no update could be verified or installed.
+- `"dialog": true` was carried over from Tauri v1. The v2 plugin's `Config` struct has
+  no such field — checked in `tauri-plugin-updater-2.10.1` — so serde ignored it, and
+  since nothing called `check()`, the app would never have looked for an update at all.
+
+All three are fixed and the runtime half now exists: `update::decide` holds the rule
+about what to interrupt the user for, and `UpdateCard` checks on launch, shows release
+notes, and installs only on a click. Nothing installs by itself — an app that swapped
+its own bundle mid-meeting would lose a recording, which is the one failure this
+product cannot have.
+
+**Still yours to do:** `gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/oatmeal.key`.
+The private key lives outside the repo and **is not recoverable** — lose it and no
+future release can ever be accepted by an already-installed copy.
+
 **To finish this yourself:** a Developer ID Application certificate, an app-specific
 password, and `pnpm tauri signer generate` for the update key. Set
 `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,

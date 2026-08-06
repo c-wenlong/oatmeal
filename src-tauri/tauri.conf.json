@@ -49,10 +49,9 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/kaichen/oatmeal/releases/latest/download/latest.json"
+        "https://github.com/c-wenlong/oatmeal/releases/latest/download/latest.json"
       ],
-      "dialog": true,
-      "pubkey": ""
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE3NzE2RkUwOTU1NzRENzkKUldSNVRWZVY0Rzl4cHpqS3N5Qjc5NWE3RXVFRnpxWkR5NmR4ZXJ4OGppVmtwT1pOTWppbE91RHYK"
     }
   }
 }
