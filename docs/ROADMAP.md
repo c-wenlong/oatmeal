@@ -638,6 +638,38 @@ product cannot have.
 The private key lives outside the repo and **is not recoverable** — lose it and no
 future release can ever be accepted by an already-installed copy.
 
+**Signing was proven on 2026-08-06** with a real Developer ID certificate
+(`Wenlong Chen (MAK855QGSV)`), against the actual app rather than a stub:
+
+- `codesign --verify --deep --strict` passes, nested Swift sidecar included, with a
+  genuine Apple `Timestamp` — which notarization requires.
+- The chain is complete: leaf → Developer ID Certification Authority → Apple Root CA.
+- `spctl --assess` reports **`rejected / source=Unnotarized Developer ID`**. That is
+  the correct answer at this stage and is the proof the certificate is the right
+  *type*: Gatekeeper recognises a real Developer ID and objects only to the missing
+  notarization. The previous state was `adhoc, linker-signed`.
+- The updater signature's key id (`794D5795E06F71A7`) **matches the public key in
+  `tauri.conf.json`**. A mismatch here would ship releases that every installed copy
+  silently refuses.
+
+Three traps found doing it, all of which read as something other than what they are:
+
+- **The Developer ID intermediate is not preinstalled** and does not come with the
+  certificate. Without it `codesign` says *"unable to build chain to self-signed
+  root"* and `security find-identity -v` reports zero valid identities while
+  `verify-cert` succeeds — because the latter may fetch the intermediate over the
+  network and the former will not. The release workflow now imports it explicitly and
+  asserts a valid identity before building.
+- **Local release builds now need `TAURI_SIGNING_PRIVATE_KEY`.** Setting `pubkey`
+  turned updater artifacts on, so a bare `pnpm tauri build` fails with *"a public key
+  has been found, but no private key"*. Use
+  `TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/oatmeal.key)" pnpm tauri build`. CI is
+  unaffected; the secret is set there.
+- **Apple's timestamp server is a real dependency and it flakes.** One build died on
+  *"The timestamp service is not available"* and the identical retry succeeded. Never
+  reach for `--timestamp=none` to make it go away: notarization requires the
+  timestamp.
+
 **To finish this yourself:** a Developer ID Application certificate, an app-specific
 password, and `pnpm tauri signer generate` for the update key. Set
 `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,

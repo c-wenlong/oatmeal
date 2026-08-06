@@ -75,8 +75,26 @@ jobs:
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security import certificate.p12 -k "$KEYCHAIN" \
             -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+
+          # The Developer ID intermediate, without which codesign fails with
+          # "unable to build chain to self-signed root" — a message that reads
+          # like a broken certificate rather than a missing rung. Apple no
+          # longer ships it preinstalled and does not bundle it with the
+          # certificate you download, so it is fetched explicitly. Verified as
+          # the real thing by the fact that it chains to Apple Root CA, which
+          # is already in the system trust store.
+          curl -fsS -o DeveloperIDG2CA.cer \
+            https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import DeveloperIDG2CA.cer -k "$KEYCHAIN"
+
           security set-key-partition-list -S apple-tool:,apple: -s -k runner "$KEYCHAIN"
-          rm certificate.p12
+          rm certificate.p12 DeveloperIDG2CA.cer
+
+          # Fail here, loudly, rather than three minutes later inside a bundle
+          # step whose error says only "failed to sign app".
+          security find-identity -v -p codesigning "$KEYCHAIN" | tee /dev/stderr \
+            | grep -q "1 valid identities found" \
+            || { echo "::error::no valid signing identity after import"; exit 1; }
 
       - name: Build and bundle
         env:
