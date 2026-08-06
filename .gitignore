@@ -39,3 +39,10 @@ test-results/
 .env
 .env.local
 target/
+
+# Signing material. None of this belongs in a repository.
+*.p12
+*.pfx
+*.certSigningRequest
+*.key.pub
+*.key
