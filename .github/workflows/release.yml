@@ -22,6 +22,10 @@ jobs:
     # refuses to parse the manifest at all. macos-15 is still Apple Silicon,
     # which the sidecar requires for arm64 CoreML.
     runs-on: macos-15
+    # A hung notarization or a locked keychain would otherwise sit on a
+    # runner for GitHub's six-hour default. A clean release takes well
+    # under this even with a cold cache.
+    timeout-minutes: 60
     permissions:
       contents: write
 
@@ -44,6 +48,13 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+
+      # Releases were recompiling every dependency from scratch, which is
+      # both slow and what stretched the build past the keychain's lock
+      # timeout in the first place.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
       - name: Show toolchain
         run: |
@@ -86,7 +97,20 @@ jobs:
           KEYCHAIN=build.keychain
           security create-keychain -p runner "$KEYCHAIN"
           security default-keychain -s "$KEYCHAIN"
+          # Also put it on the search list. `default-keychain` alone is not
+          # enough for every tool that goes looking for an identity.
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
           security unlock-keychain -p runner "$KEYCHAIN"
+
+          # Turn OFF auto-locking. A new keychain re-locks after five minutes
+          # idle, and the release build spends far longer than that compiling
+          # Rust before it ever reaches codesign. A locked keychain does not
+          # make codesign fail — it makes it block on an interactive unlock
+          # prompt that can never appear on a headless runner, so the job hangs
+          # until the job timeout kills it. Passing neither -l nor -u disables
+          # both lock-on-sleep and lock-on-timeout; this keychain is thrown away
+          # with the runner, so there is nothing to protect it from.
+          security set-keychain-settings "$KEYCHAIN"
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security import certificate.p12 -k "$KEYCHAIN" \
             -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
