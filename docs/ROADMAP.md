@@ -81,31 +81,6 @@ Phase 1 notes:
 Dated records of what was actually executed, so that a green suite is never mistaken
 for evidence about the things a green suite cannot reach.
 
-### 2026-08-06 — full suite, plus the live tests
-
-`main` at `df92850`. Three suites, all passing: **506 Rust** (497 lib + 9 integration),
-**269 frontend**, **98 Swift**.
-
-The six `#[ignore]` tests were then run on their own (`cargo test -- --ignored
---test-threads=1`) and all six pass in 83s. They are ignored by default because they
-need the network and a real model — not because they are flaky. What each established:
-
-- The **llama.cpp pin `b10229`** downloads, extracts with its 18 symlinks intact, and
-  reports `version: 10229 (c745be2a2)`, Darwin arm64.
-- **Cold start to generation:** 491 MB fetched in 52.1s, server up, model replied.
-- **Every model URL serves real GGUF bytes** — qwen2.5-3b 2.10 GB, qwen2.5-7b 4.68 GB.
-- **Chat over a folder** returned 5 claims citing `[#1]`–`[#5]`, every id resolving:
-  0 invented citations, 0 uncited claims.
-- **An hour of transcript**: 721 texts embedded and 3 links written in 6.2s.
-- **The α sweep reproduces the plateau**: 14/14 at α=0.2/0.3/0.4, falling to 10/14 at
-  α=0.1 and 8/14 at α=1.0. The shipped α=0.3 sits at its centre, not on a cliff edge.
-
-**What this does not prove.** The sweep still runs on the 14-case fixture with a
-bag-of-words stand-in embedder, so it says the constant is well chosen *for that
-corpus* and nothing about real meetings — G17's done-when is unchanged. Notion,
-Google Calendar, EventKit, code signing and the menu bar item remain unverified for
-the reasons recorded against their own goals.
-
 ### 2026-08-07 — signed, notarized, and accepted by Gatekeeper
 
 The first fully clean build. `spctl` returns `accepted / source=Notarized
@@ -164,6 +139,31 @@ language, and settles nothing about the temporal layer, which the corpus cannot 
 because it carries no timestamps.
 
 ---
+
+### 2026-08-06 — full suite, plus the live tests
+
+`main` at `df92850`. Three suites, all passing: **506 Rust** (497 lib + 9 integration),
+**269 frontend**, **98 Swift**.
+
+The six `#[ignore]` tests were then run on their own (`cargo test -- --ignored
+--test-threads=1`) and all six pass in 83s. They are ignored by default because they
+need the network and a real model — not because they are flaky. What each established:
+
+- The **llama.cpp pin `b10229`** downloads, extracts with its 18 symlinks intact, and
+  reports `version: 10229 (c745be2a2)`, Darwin arm64.
+- **Cold start to generation:** 491 MB fetched in 52.1s, server up, model replied.
+- **Every model URL serves real GGUF bytes** — qwen2.5-3b 2.10 GB, qwen2.5-7b 4.68 GB.
+- **Chat over a folder** returned 5 claims citing `[#1]`–`[#5]`, every id resolving:
+  0 invented citations, 0 uncited claims.
+- **An hour of transcript**: 721 texts embedded and 3 links written in 6.2s.
+- **The α sweep reproduces the plateau**: 14/14 at α=0.2/0.3/0.4, falling to 10/14 at
+  α=0.1 and 8/14 at α=1.0. The shipped α=0.3 sits at its centre, not on a cliff edge.
+
+**What this does not prove.** The sweep still runs on the 14-case fixture with a
+bag-of-words stand-in embedder, so it says the constant is well chosen *for that
+corpus* and nothing about real meetings — G17's done-when is unchanged. Notion,
+Google Calendar, EventKit, code signing and the menu bar item remain unverified for
+the reasons recorded against their own goals.
 
 ## Decision gates
 
