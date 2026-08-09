@@ -46,9 +46,12 @@ Phase 3 notes:
   the G13 entry below for what the verification turned up.
 
 Phase 2 notes:
-- **G9 shipped without the Granola UI description** (the gate was never answered),
-  so the meeting view follows SPEC §9 as written: notepad primary, transcript
-  collapsible beside it. Worth revisiting once that description arrives.
+- **G9 shipped without the Granola UI description** (the gate was unanswered at the
+  time), so the meeting view followed SPEC §9 as written. **The gate is now answered**
+  from direct observation of Granola's macOS app — see
+  [ui-teardown.md](./ui-teardown.md). The finding is not that the styling is poor but
+  that the app never left its build harness: every surface is a diagnostic card. The
+  teardown sets out the two screens it should have instead, and what to subtract.
 - Note blocks needed a migration. 0001 keyed them by `seq`, which breaks the
   moment a line is inserted mid-document — every block below shifts and inherits
   its neighbour's `first_typed_at_ms`. Since the linker keys on exactly that
@@ -171,7 +174,7 @@ Open questions from SPEC §13, mapped to the goal they block. Answer each just b
 
 | Question | Blocks | Default if unanswered |
 |---|---|---|
-| Granola UI description | **G9** | Build from SPEC §9 as written |
+| ~~Granola UI description~~ | **G9** | **Answered 2026-08-07** — see [ui-teardown.md](./ui-teardown.md) |
 | Template authoring: prompt-only or prompt + schema? | **G14** | Prompt + enforced JSON schema |
 | Panel editing: does regenerate overwrite or fork? | **G15** | Fork — edits are never destroyed |
 | In-person diarization: accept degradation? | **G7** | Accept for v1; FluidAudio deferred |
