@@ -31,6 +31,15 @@ interface Props {
   highlightedBlocks?: Set<string>;
   /** Fires with the block under the pointer, or null on leaving the editor. */
   onHoverBlock?: (blockId: string | null) => void;
+  /**
+   * How much of itself to draw.
+   *
+   * `card` is the harness: a bordered panel with a "Notes" label, correct when
+   * it sits among other diagnostic cards. `canvas` is the document, where the
+   * notes *are* the page — a label and a border there would frame the writing
+   * surface as one more widget on a form.
+   */
+  variant?: "card" | "canvas";
 }
 
 /** Reads the editor's top-level blocks in display order. */
@@ -54,6 +63,7 @@ export function Notepad({
   onSaveStateChange,
   highlightedBlocks,
   onHoverBlock,
+  variant = "card",
 }: Props) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const saved = useRef<NoteBlock[]>([]);
@@ -192,7 +202,7 @@ export function Notepad({
 
   return (
     <div
-      className="notepad"
+      className={variant === "canvas" ? "notepad notepad--canvas" : "notepad"}
       ref={editorRef}
       onMouseLeave={() => onHoverBlock?.(null)}
       onMouseOver={(event) => {
@@ -204,7 +214,9 @@ export function Notepad({
       }}
     >
       <div className="notepad-head">
-        <span className="notepad-label">Notes</span>
+        {variant === "card" && <span className="notepad-label">Notes</span>}
+        {/* The save state stays in both. It is the only thing here that can
+            tell you your typing is not reaching the disk. */}
         <span className={`notepad-save notepad-save--${saveState}`}>
           {saveState === "saving" && "saving…"}
           {saveState === "saved" && "saved"}
@@ -216,7 +228,7 @@ export function Notepad({
       ) : (
         <EditorContent editor={editor} />
       )}
-      <p className="notepad-hint">{placeholder}</p>
+      {variant === "card" && <p className="notepad-hint">{placeholder}</p>}
     </div>
   );
 }

@@ -1225,3 +1225,17 @@ input:focus {
 .document-canvas {
   margin-top: 2rem;
 }
+
+/* The notepad as the page rather than a panel: no frame, no label, and room
+   to write into. A bordered box says "field"; this should say "document". */
+.notepad--canvas {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  min-height: 24rem;
+}
+
+.notepad--canvas .notepad-head {
+  justify-content: flex-end;
+  min-height: 1rem;
+}

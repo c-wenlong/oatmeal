@@ -158,6 +158,7 @@ export function MeetingDocument({
         <Notepad
           meetingId={meetingId}
           elapsedMs={() => noteAnchorMs(meeting, Date.now())}
+          variant="canvas"
         />
       </div>
     </article>
