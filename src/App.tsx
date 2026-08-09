@@ -15,6 +15,7 @@ import { UpdateCard } from "./components/UpdateCard";
 import { NotionCard } from "./components/NotionCard";
 import { Onboarding } from "./components/Onboarding";
 import { Library } from "./components/Library";
+import { MeetingDocument } from "./components/MeetingDocument";
 
 /**
  * Which window this is.
@@ -47,7 +48,10 @@ function currentLabel(): string | undefined {
  * would remove working features to make the app look finished, so it stays
  * reachable and unglamorous until there is somewhere else for its contents.
  */
-export type View = "library" | "workbench";
+export type View =
+  | { screen: "library" }
+  | { screen: "meeting"; meetingId: string }
+  | { screen: "workbench" };
 
 function App() {
   // Which window, decided before any state exists. Keeping this in its own
@@ -60,7 +64,7 @@ function App() {
 }
 
 function MainWindow() {
-  const [view, setView] = useState<View>("library");
+  const [view, setView] = useState<View>({ screen: "library" });
 
   /**
    * Opens a meeting and scrolls to a moment in it.
@@ -75,25 +79,31 @@ function MainWindow() {
     );
   };
 
-  if (view === "library") {
+  if (view.screen === "meeting") {
+    return (
+      <main className="app">
+        <MeetingDocument
+          meetingId={view.meetingId}
+          onBack={() => setView({ screen: "library" })}
+        />
+      </main>
+    );
+  }
+
+  if (view.screen === "library") {
     return (
       <main className="app">
         <header className="library-head">
           <h1 className="library-title">Meetings</h1>
-          <button className="link-button" onClick={() => setView("workbench")}>
+          <button
+            className="link-button"
+            onClick={() => setView({ screen: "workbench" })}
+          >
             Workbench
           </button>
         </header>
         <Onboarding />
-        <Library
-          onOpen={(meetingId) => {
-            // G31 builds the meeting document. Until then the workbench is
-            // where a meeting can actually be read, so opening one goes there
-            // and asks it to reveal the meeting rather than silently no-oping.
-            setView("workbench");
-            reveal(meetingId, 0);
-          }}
-        />
+        <Library onOpen={(meetingId) => setView({ screen: "meeting", meetingId })} />
       </main>
     );
   }
@@ -103,7 +113,7 @@ function MainWindow() {
       <header className="masthead">
         <h1>Oatmeal</h1>
         <span className="phase-tag">Workbench</span>
-        <button className="link-button" onClick={() => setView("library")}>
+        <button className="link-button" onClick={() => setView({ screen: "library" })}>
           ← Meetings
         </button>
       </header>
