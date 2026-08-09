@@ -143,7 +143,8 @@ describe("PanelView", () => {
     );
 
     render(<PanelView meetingId="m1" />);
-    await userEvent.click(await screen.findByRole("button", { name: /regenerate/i }));
+    await userEvent.click(await screen.findByLabelText("template"));
+    await userEvent.click(screen.getByLabelText(/^(re)?generate$/));
 
     expect(await screen.findByText("New take")).toBeInTheDocument();
 
@@ -160,8 +161,8 @@ describe("PanelView", () => {
     render(<PanelView meetingId="m1" />);
     await waitFor(() => expect(mockTemplates).toHaveBeenCalled());
 
-    await userEvent.selectOptions(screen.getByLabelText("Template"), "standup");
-    await userEvent.click(screen.getByRole("button", { name: /generate/i }));
+    await userEvent.click(screen.getByLabelText("template"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Standup" }));
 
     expect(mockGenerate).toHaveBeenCalledWith("m1", "standup");
   });
@@ -170,6 +171,10 @@ describe("PanelView", () => {
     // The privacy story rests on this being per-generation, not per-app.
     mockList.mockResolvedValue([panel("p1", cited)]);
     render(<PanelView meetingId="m1" />);
+
+    // Provenance moved into the template pill's menu: still one click away,
+    // no longer printed under every summary in the document.
+    await userEvent.click(await screen.findByLabelText("template"));
     expect(await screen.findByText(/Ollama.*llama3\.2/)).toBeInTheDocument();
   });
 
@@ -177,22 +182,23 @@ describe("PanelView", () => {
     mockGenerate.mockRejectedValue(new Error("OpenAI needs an API key"));
     render(<PanelView meetingId="m1" />);
 
-    await userEvent.click(await screen.findByRole("button", { name: /generate/i }));
+    await userEvent.click(await screen.findByLabelText("template"));
+    await userEvent.click(screen.getByLabelText(/^(re)?generate$/));
     expect(await screen.findByText(/needs an API key/)).toBeInTheDocument();
   });
 
   it("cannot generate without a meeting", async () => {
     render(<PanelView meetingId={null} />);
-    expect(await screen.findByRole("button", { name: /generate/i })).toBeDisabled();
+    // The pill itself is closed when there is no meeting to summarise.
+    expect(await screen.findByLabelText("template")).toBeDisabled();
   });
 
   it("deletes a single version without touching the rest", async () => {
     mockList.mockResolvedValue([panel("p1", cited)]);
     render(<PanelView meetingId="m1" />);
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: /delete this version/i }),
-    );
+    await userEvent.click(await screen.findByLabelText("template"));
+    await userEvent.click(screen.getByRole("button", { name: /delete this version/i }));
     expect(mockDelete).toHaveBeenCalledWith("p1");
   });
 

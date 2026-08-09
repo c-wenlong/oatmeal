@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { panelDelete, panelGenerate, panelsList, templatesList } from "../lib/tauri";
 import type { Panel, PanelContent, Template } from "../types";
+import { TemplatePill } from "./TemplatePill";
 
 interface Props {
   meetingId: string | null;
@@ -67,12 +68,13 @@ export function PanelView({ meetingId, onCitationClick }: Props) {
     void refresh();
   }, [refresh]);
 
-  const generate = async () => {
+  const generate = async (chosen: string) => {
     if (!meetingId) return;
+    setTemplateId(chosen);
     setMessage(null);
     setBusy(true);
     try {
-      const panel = await panelGenerate(meetingId, templateId);
+      const panel = await panelGenerate(meetingId, chosen);
       // Show the new one, but keep the old: regenerating forks.
       setPanels((previous) => [panel, ...previous.filter((p) => p.id !== panel.id)]);
       setSelected(panel.id);
@@ -102,24 +104,28 @@ export function PanelView({ meetingId, onCitationClick }: Props) {
   return (
     <section className="panel-view">
       <div className="panel-head">
-        <span className="notepad-label">Summary</span>
-        <div className="row">
-          <select
-            aria-label="Template"
-            value={templateId}
-            onChange={(e) => setTemplateId(e.currentTarget.value)}
-            disabled={busy}
-          >
-            {templates.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.name}
-              </option>
-            ))}
-          </select>
-          <button className="primary" onClick={generate} disabled={!meetingId || busy}>
-            {busy ? "Generating…" : panels.length > 0 ? "Regenerate" : "Generate"}
-          </button>
-        </div>
+        <TemplatePill
+          templates={templates}
+          templateId={open?.templateId ?? templateId}
+          busy={busy}
+          disabled={!meetingId}
+          hasPanel={panels.length > 0}
+          onGenerate={(chosen) => void generate(chosen)}
+          footer={
+            open && (
+              <>
+                <span className="tpill-provenance">
+                  {open.provider ?? "unknown"}
+                  {open.model ? ` · ${open.model}` : ""} ·{" "}
+                  {formatWhen(open.generatedAt)}
+                </span>
+                <button className="tpill-item" onClick={() => remove(open.id)}>
+                  Delete this version
+                </button>
+              </>
+            )
+          }
+        />
       </div>
 
       {message && <p className="empty-note">{message}</p>}
@@ -196,16 +202,6 @@ export function PanelView({ meetingId, onCitationClick }: Props) {
               </ul>
             </div>
           ))}
-
-          <div className="panel-foot">
-            <span>
-              {open.provider ?? "unknown"}
-              {open.model ? ` · ${open.model}` : ""} · {formatWhen(open.generatedAt)}
-            </span>
-            <button className="link-button" onClick={() => remove(open.id)}>
-              Delete this version
-            </button>
-          </div>
         </>
       )}
     </section>
