@@ -1064,3 +1064,100 @@ input:focus {
 .onboarding {
   border-color: var(--accent);
 }
+
+/* ---------------------------------------------------------------- library
+   Per docs/ui-teardown.md: the home is a quiet list on the background, not a
+   stack of cards. No borders, no fills, nothing until hover. */
+
+.library {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 6rem;
+}
+
+.library-day + .library-day {
+  margin-top: 2.25rem;
+}
+
+.library-day-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin: 0 0 0.5rem 0.75rem;
+}
+
+.library-row {
+  display: grid;
+  /* Title takes the slack; the meta and time columns stay put so the times
+     line up down the page and can be scanned as a column. */
+  grid-template-columns: 1fr auto auto;
+  gap: 1rem;
+  align-items: baseline;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.library-row:hover,
+.library-row:focus-visible {
+  background: var(--surface);
+}
+
+.library-row-title {
+  font-size: 0.9375rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-row-meta,
+.library-row-time {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Only the meta column is hover-revealed. The time is a scanning aid and must
+   stay visible; hiding it would defeat the column it forms. */
+.library-row-meta {
+  opacity: 0;
+}
+
+.library-row:hover .library-row-meta,
+.library-row:focus-visible .library-row-meta {
+  opacity: 1;
+}
+
+.library-live {
+  color: var(--accent);
+}
+
+.library-empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 4rem 0;
+}
+
+.library-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 2rem 2.25rem 0;
+}
+
+.library-title {
+  /* Serif, per the teardown: the title should read as a document heading
+     rather than a toolbar label. G36 formalises the type scale. */
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  font-size: 1.75rem;
+  font-weight: 400;
+  margin: 0;
+}

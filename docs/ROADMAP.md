@@ -14,6 +14,7 @@
 | 5 · Autonomy | G19–G23 | ✅ **Complete** (see notes) |
 | 6 · Corpus | G24–G25 | ✅ **Complete** |
 | 7 · Ship | G26–G29 | ✅ **Complete** (G29: signed + notarized 2026-08-07; auto-update unproven) |
+| 8 · The interface | G30–G36 | 🚧 **In progress** — see [ui-teardown.md](./ui-teardown.md) |
 
 **Speaker bleed is fixed** (G2 finding #2, carried since Phase 0). `EchoSuppressor`
 drops mic lines that are the speakers coming back through the room. Hardware AEC was
@@ -73,7 +74,7 @@ Phase 1 notes:
 
 ---
 
-29 sequential goals in 8 phases. Each goal states what it depends on, what to build, and a **Done when** that is observable — not "code written" but "this behaviour can be demonstrated." Work them in order. Don't start a goal whose dependency is unmet.
+36 sequential goals in 9 phases. Each goal states what it depends on, what to build, and a **Done when** that is observable — not "code written" but "this behaviour can be demonstrated." Work them in order. Don't start a goal whose dependency is unmet.
 
 **Ordering principle:** the two things that can kill this project are dual-stream macOS audio capture (G2/G6/G7) and note-link quality (G17). Audio is proved on day one with a throwaway spike, before any investment in app structure. Link quality can't be proved early — it needs real meetings — so G17 is scheduled right after the app becomes usable enough to generate them.
 
@@ -732,6 +733,78 @@ password, and `pnpm tauri signer generate` for the update key. Set
 repository secrets, put the public key in `tauri.conf.json`, and push a `v*` tag.
 
 ---
+
+---
+
+## Phase 8 — The interface
+
+Added 2026-08-07, after the UI decision gate was finally answered by observing Granola's
+macOS app directly. The finding — see [ui-teardown.md](./ui-teardown.md) — is that
+Oatmeal never left its build harness: every surface is a diagnostic card, and its own
+subtitle says so. This phase replaces the harness with a product.
+
+**Ordering principle:** G30 and G31 change what the app *is*. Everything after them is
+subtraction. Do them first, and resist doing the type pass early — polishing a structure
+you are about to replace is wasted work.
+
+### G30 · The library
+**Depends on:** G11
+**Build:** The home screen. Meetings grouped by day under quiet date headers; each row
+a title, its owner, and a right-aligned time. Row controls appear on hover, not
+permanently. A `Coming up` block at the top showing today's and tomorrow's calendar
+events — this needs a new command, since detection consumes calendar events internally
+and never exposes them to the frontend.
+**Done when:** you can find a meeting from three weeks ago without using search, and
+nothing on the screen is a card.
+
+### G31 · The meeting document
+**Depends on:** G30
+**Build:** Serif title as the largest element. One row of metadata pills — date,
+attendees, folder. Notes as the full-width canvas, not a box beside a transcript.
+Headings marked with a `#` in the gutter. Two bullet levels distinguished by opacity
+rather than size.
+**Done when:** a meeting opens as a document you would type into, with no control
+visible that is not about this meeting.
+
+### G32 · Recording as a control, not a card
+**Depends on:** G31
+**Build:** Collapse `RecordCard` — Arm/Start/Stop, the `IDLE` badge, two meters — into
+one floating bottom control: a live level indicator and a stop square. The three-state
+engine stays; only its presentation changes.
+**Done when:** recording occupies a corner of the screen rather than out-weighting the
+notes, and the state is still unambiguous at a glance.
+
+### G33 · Hide the machinery
+**Depends on:** G31
+**Build:** Move the provider name, build time, *Delete this version*, link tuning,
+detection settings, retention, Notion, Google Calendar and update controls out of the
+main view into a `…` menu and a settings surface.
+**Done when:** the meeting view shows nothing about models, links or providers.
+
+### G34 · The template pill
+**Depends on:** G31, G33
+**Build:** Replace the `Summary ⌄` select and the large Regenerate button with one
+`✨ <template> ⌄` pill: the applied template, an inline regenerate icon, then the
+template list. Templates already exist from G14 and are simply not surfaced.
+**Done when:** changing template and regenerating are both one click from the document.
+
+### G35 · Link on hover
+**Depends on:** G31
+**Build:** Retire the permanent transcript pane. Hovering a note line reveals the moment
+it came from; hovering a transcript line highlights the note citing it. G18 already
+implements the highlight as a ProseMirror decoration — what changes is that it stops
+living in a second permanent panel.
+**Done when:** the link is discoverable without a transcript pane on screen.
+**Why not a pane:** a pane that is always present is furniture, and furniture is
+ignored. This is the product's differentiator and should appear where the eye already is.
+
+### G36 · Type and spacing
+**Depends on:** G30–G35
+**Build:** Serif display for titles, sans for body, opacity-based hierarchy, a centred
+column with generous margins, consistent spacing scale.
+**Done when:** the app reads as one designed surface rather than a stack of components.
+**Do this last** — it is the step most tempting to do first and the most wasteful to
+redo.
 
 ## Sequencing at a glance
 

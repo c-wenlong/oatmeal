@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { DbCard } from "./components/DbCard";
 import { HealthCard } from "./components/HealthCard";
 import { RecordCard } from "./components/RecordCard";
@@ -13,6 +14,7 @@ import { GoogleCalendarCard } from "./components/GoogleCalendarCard";
 import { UpdateCard } from "./components/UpdateCard";
 import { NotionCard } from "./components/NotionCard";
 import { Onboarding } from "./components/Onboarding";
+import { Library } from "./components/Library";
 
 /**
  * Which window this is.
@@ -35,10 +37,30 @@ function currentLabel(): string | undefined {
   ).__TAURI_INTERNALS__?.metadata?.currentWindow?.label;
 }
 
+/**
+ * Which screen is showing.
+ *
+ * `workbench` is the old build harness — every diagnostic card the app grew
+ * while its pipeline was being proved. Phase 8 replaces it with `library` and
+ * a meeting document, but the cards still hold the only access to settings,
+ * providers, permissions and export until G33 rehomes them. Deleting them now
+ * would remove working features to make the app look finished, so it stays
+ * reachable and unglamorous until there is somewhere else for its contents.
+ */
+export type View = "library" | "workbench";
+
 function App() {
+  // Which window, decided before any state exists. Keeping this in its own
+  // component means MainWindow's hooks are never behind a branch — the popup
+  // is a different window, but React cannot tell that from an early return.
   if (isPopupWindow(window.location.search, currentLabel())) {
     return <DetectionPopup />;
   }
+  return <MainWindow />;
+}
+
+function MainWindow() {
+  const [view, setView] = useState<View>("library");
 
   /**
    * Opens a meeting and scrolls to a moment in it.
@@ -53,27 +75,46 @@ function App() {
     );
   };
 
+  if (view === "library") {
+    return (
+      <main className="app">
+        <header className="library-head">
+          <h1 className="library-title">Meetings</h1>
+          <button className="link-button" onClick={() => setView("workbench")}>
+            Workbench
+          </button>
+        </header>
+        <Onboarding />
+        <Library
+          onOpen={(meetingId) => {
+            // G31 builds the meeting document. Until then the workbench is
+            // where a meeting can actually be read, so opening one goes there
+            // and asks it to reveal the meeting rather than silently no-oping.
+            setView("workbench");
+            reveal(meetingId, 0);
+          }}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="app">
       <header className="masthead">
         <h1>Oatmeal</h1>
-        <span className="phase-tag">Phase 5</span>
+        <span className="phase-tag">Workbench</span>
+        <button className="link-button" onClick={() => setView("library")}>
+          ← Meetings
+        </button>
       </header>
       <p className="tagline">
-        Build harness. Each card proves one piece of the pipeline works end to end
-        &mdash; not that the code compiles, but that the behaviour is observable.
+        The build harness. Each card proves one piece of the pipeline works end to end
+        &mdash; not that the code compiles, but that the behaviour is observable. Phase
+        8 is moving what belongs to users out of here.
       </p>
 
-      {/* Recording first — it is what the app is for. Then the pre-flight that
-          gates it, then the diagnostics. The sidecar log grows without bound, so
-          it sits below anything that needs to stay glanceable. */}
-      {/* First run, above everything: someone who cannot record yet has no use
-          for the cards below it. Renders nothing once setup is done. */}
       <Onboarding />
       <RecordCard />
-      {/* Search and Ask sit directly under the recording surface: they are what
-          the corpus is *for*, and burying them under diagnostics would say the
-          opposite. */}
       <SearchCard onReveal={reveal} />
       <ChatCard onReveal={reveal} />
       <DetectionSettingsPanel />
