@@ -16,6 +16,7 @@ import { NotionCard } from "./components/NotionCard";
 import { Onboarding } from "./components/Onboarding";
 import { Library } from "./components/Library";
 import { MeetingDocument } from "./components/MeetingDocument";
+import { RecordControl } from "./components/RecordControl";
 
 /**
  * Which window this is.
@@ -86,6 +87,11 @@ function MainWindow() {
           meetingId={view.meetingId}
           onBack={() => setView({ screen: "library" })}
         />
+        {/* Fixed to the window, not the document: the one control that must
+            never be scrolled away from. Absent on the workbench, which still
+            has the old card until G33 takes it apart — two recording UIs on
+            one screen would be worse than either. */}
+        <RecordControl />
       </main>
     );
   }
@@ -104,6 +110,7 @@ function MainWindow() {
         </header>
         <Onboarding />
         <Library onOpen={(meetingId) => setView({ screen: "meeting", meetingId })} />
+        <RecordControl />
       </main>
     );
   }

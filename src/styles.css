@@ -1239,3 +1239,94 @@ input:focus {
   justify-content: flex-end;
   min-height: 1rem;
 }
+
+/* ---------------------------------------------------------- record control
+   Recording gets a corner, not a panel. Fixed so it survives scrolling a long
+   document — the one control that must never be scrolled away from. */
+
+.reccontrol {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  transform: translateX(-50%);
+  z-index: 20;
+}
+
+.reccontrol-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem 0.5rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 18%);
+}
+
+.reccontrol-label {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  min-width: 5.5rem;
+}
+
+.reccontrol-pill--recording .reccontrol-label {
+  color: var(--accent);
+}
+
+.reccontrol-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 1rem;
+}
+
+.reccontrol-bar {
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.reccontrol-bar--lit {
+  background: var(--accent);
+}
+
+.reccontrol-start,
+.reccontrol-stop {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+}
+
+.reccontrol-start:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.reccontrol-dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+/* A square, not a second dot: stop and record must never be mistaken for one
+   another at a glance. */
+.reccontrol-square {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.reccontrol-message {
+  margin: 0.5rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  text-align: center;
+}
