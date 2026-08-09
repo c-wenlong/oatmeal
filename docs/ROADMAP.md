@@ -756,6 +756,8 @@ events — this needs a new command, since detection consumes calendar events in
 and never exposes them to the frontend.
 **Done when:** you can find a meeting from three weeks ago without using search, and
 nothing on the screen is a card.
+**Status:** ✅ Done. `Coming up` is **not** built — detection consumes calendar events
+internally and exposing them needs a command that does not exist yet.
 
 ### G31 · The meeting document
 **Depends on:** G30
@@ -765,6 +767,9 @@ Headings marked with a `#` in the gutter. Two bullet levels distinguished by opa
 rather than size.
 **Done when:** a meeting opens as a document you would type into, with no control
 visible that is not about this meeting.
+**Status:** ✅ Done. Screenshotting it caught what the tests could not: the notepad
+still drew its own bordered card labelled "Notes" inside the document. `Notepad` now
+takes a variant — `card` for the harness, `canvas` for the page.
 
 ### G32 · Recording as a control, not a card
 **Depends on:** G31
@@ -773,6 +778,9 @@ one floating bottom control: a live level indicator and a stop square. The three
 engine stays; only its presentation changes.
 **Done when:** recording occupies a corner of the screen rather than out-weighting the
 notes, and the state is still unambiguous at a glance.
+**Status:** ✅ Done, and **never yet run against a real recording** — the interesting
+question, whether it reads Ready → Recording → Finishing against the live sidecar,
+needs an actual meeting.
 
 ### G33 · Hide the machinery
 **Depends on:** G31
@@ -780,6 +788,19 @@ notes, and the state is still unambiguous at a glance.
 detection settings, retention, Notion, Google Calendar and update controls out of the
 main view into a `…` menu and a settings surface.
 **Done when:** the meeting view shows nothing about models, links or providers.
+**Status:** ✅ Done for global settings. Ten cards moved to a Settings screen behind a
+`…` menu, and the workbench fell from fourteen components to four.
+
+**A gap this exposed, which the phase plan missed:** what is left on the workbench is
+`RecordCard`, `SearchCard` and `ChatCard`. The last two are not machinery — they are
+G24 and G25, the whole point of having a corpus — and they are now stranded on a screen
+called "Workbench" reachable only through an overflow menu. The teardown's mapping table
+says chat should be a floating pill, but no numbered goal owns moving it. **G37 is
+needed**, or the workbench can never be deleted without losing features.
+
+Link tuning also stayed with the meeting rather than moving here: it is scoped to one
+meeting's links, so global settings is the wrong home. It belongs behind the document's
+own `…`, which G34 introduces.
 
 ### G34 · The template pill
 **Depends on:** G31, G33

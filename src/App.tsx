@@ -1,22 +1,14 @@
 import { useState } from "react";
-import { DbCard } from "./components/DbCard";
-import { HealthCard } from "./components/HealthCard";
 import { RecordCard } from "./components/RecordCard";
-import { ProviderCard } from "./components/ProviderCard";
-import { PermissionsCard } from "./components/PermissionsCard";
-import { SidecarCard } from "./components/SidecarCard";
 import { DetectionPopup } from "./components/DetectionPopup";
-import { DetectionSettingsPanel } from "./components/DetectionSettings";
 import { SearchCard } from "./components/SearchCard";
 import { ChatCard } from "./components/ChatCard";
-import { PrivacyCard } from "./components/PrivacyCard";
-import { GoogleCalendarCard } from "./components/GoogleCalendarCard";
-import { UpdateCard } from "./components/UpdateCard";
-import { NotionCard } from "./components/NotionCard";
 import { Onboarding } from "./components/Onboarding";
 import { Library } from "./components/Library";
 import { MeetingDocument } from "./components/MeetingDocument";
 import { RecordControl } from "./components/RecordControl";
+import { Settings } from "./components/Settings";
+import { OverflowMenu } from "./components/OverflowMenu";
 
 /**
  * Which window this is.
@@ -52,6 +44,7 @@ function currentLabel(): string | undefined {
 export type View =
   | { screen: "library" }
   | { screen: "meeting"; meetingId: string }
+  | { screen: "settings" }
   | { screen: "workbench" };
 
 function App() {
@@ -96,17 +89,27 @@ function MainWindow() {
     );
   }
 
+  if (view.screen === "settings") {
+    return (
+      <main className="app">
+        <Settings onBack={() => setView({ screen: "library" })} />
+      </main>
+    );
+  }
+
   if (view.screen === "library") {
     return (
       <main className="app">
         <header className="library-head">
           <h1 className="library-title">Meetings</h1>
-          <button
-            className="link-button"
-            onClick={() => setView({ screen: "workbench" })}
-          >
-            Workbench
-          </button>
+          <OverflowMenu
+            items={[
+              { label: "Settings", onSelect: () => setView({ screen: "settings" }) },
+              // The workbench survives here alone. It still holds the transcript
+              // and the sidecar log, and G35 is what finally gives those a home.
+              { label: "Workbench", onSelect: () => setView({ screen: "workbench" }) },
+            ]}
+          />
         </header>
         <Onboarding />
         <Library onOpen={(meetingId) => setView({ screen: "meeting", meetingId })} />
@@ -134,16 +137,6 @@ function MainWindow() {
       <RecordCard />
       <SearchCard onReveal={reveal} />
       <ChatCard onReveal={reveal} />
-      <DetectionSettingsPanel />
-      <GoogleCalendarCard />
-      <UpdateCard />
-      <NotionCard />
-      <PrivacyCard />
-      <PermissionsCard />
-      <ProviderCard />
-      <HealthCard />
-      <SidecarCard />
-      <DbCard />
     </main>
   );
 }

@@ -1330,3 +1330,72 @@ input:focus {
   color: var(--muted);
   text-align: center;
 }
+
+.settings {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 1.5rem 2.25rem 8rem;
+}
+
+.settings-title {
+  margin: 1rem 0 2rem;
+}
+
+.settings-section {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 2.5rem 0 0.75rem;
+}
+
+.overflow {
+  position: relative;
+}
+
+.overflow-button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.overflow-button:hover {
+  color: var(--text);
+}
+
+.overflow-menu {
+  position: absolute;
+  right: 0;
+  top: 1.9rem;
+  min-width: 10rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 22%);
+  z-index: 30;
+}
+
+.overflow-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.overflow-item:hover {
+  background: var(--bg);
+}
