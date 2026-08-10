@@ -1516,3 +1516,53 @@ input:focus {
   color: var(--muted);
   padding: 0.3rem 0.6rem;
 }
+
+/* ------------------------------------------------------------ linked moment
+   The transcript line a note came from, shown while that note is hovered.
+   Fixed to the bottom-left so it never covers the line being read, and never
+   moves the document — a reveal that reflowed the text under the pointer would
+   be unusable. */
+
+.moment {
+  position: fixed;
+  left: 1.5rem;
+  bottom: 1.5rem;
+  max-width: 22rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 22%);
+  z-index: 15;
+  pointer-events: none;
+}
+
+.moment-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.75rem;
+}
+
+.moment-speaker {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.moment-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.moment-method {
+  color: var(--muted);
+  margin-left: auto;
+  font-style: italic;
+}
+
+.moment-text {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}

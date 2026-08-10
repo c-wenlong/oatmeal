@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { meetingRename, meetingsList } from "../lib/tauri";
-import type { MeetingSummary } from "../types";
+import {
+  meetingLinks,
+  meetingRename,
+  meetingTranscript,
+  meetingsList,
+} from "../lib/tauri";
+import type { MeetingSummary, StoredLink, Utterance } from "../types";
 import { meetingTitle } from "./Library";
 import { Notepad } from "./Notepad";
+import { LinkedMoment } from "./LinkedMoment";
 import { PanelView } from "./PanelView";
 
 /**
@@ -81,6 +87,9 @@ export function MeetingDocument({
   const [meeting, setMeeting] = useState<MeetingSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
+  const [links, setLinks] = useState<StoredLink[]>([]);
+  const [utterances, setUtterances] = useState<Utterance[]>([]);
+  const [hovered, setHovered] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
@@ -100,6 +109,18 @@ export function MeetingDocument({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    // Both are needed before a hover can say anything, and both are read-only,
+    // so a failure here costs the reveal and nothing else — the document still
+    // opens and is still editable.
+    void meetingLinks(meetingId)
+      .then(setLinks)
+      .catch(() => setLinks([]));
+    void meetingTranscript(meetingId)
+      .then(setUtterances)
+      .catch(() => setUtterances([]));
+  }, [meetingId]);
 
   async function commitTitle() {
     const next = titleRef.current?.value.trim();
@@ -159,8 +180,11 @@ export function MeetingDocument({
           meetingId={meetingId}
           elapsedMs={() => noteAnchorMs(meeting, Date.now())}
           variant="canvas"
+          onHoverBlock={setHovered}
         />
       </div>
+
+      <LinkedMoment blockId={hovered} links={links} utterances={utterances} />
     </article>
   );
 }

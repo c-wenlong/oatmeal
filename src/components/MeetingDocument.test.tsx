@@ -7,12 +7,19 @@ import {
   metaPills,
   noteAnchorMs,
 } from "./MeetingDocument";
-import { meetingRename, meetingsList } from "../lib/tauri";
+import {
+  meetingLinks,
+  meetingRename,
+  meetingTranscript,
+  meetingsList,
+} from "../lib/tauri";
 import type { MeetingSummary } from "../types";
 
 vi.mock("../lib/tauri", () => ({
   meetingsList: vi.fn(),
   meetingRename: vi.fn(),
+  meetingLinks: vi.fn(),
+  meetingTranscript: vi.fn(),
 }));
 // The document composes the real editor and panel view; both reach for Tauri
 // and a ProseMirror DOM, neither of which this test is about.
@@ -21,6 +28,8 @@ vi.mock("./PanelView", () => ({ PanelView: () => <div data-testid="panels" /> })
 
 const mockList = vi.mocked(meetingsList);
 const mockRename = vi.mocked(meetingRename);
+const mockLinks = vi.mocked(meetingLinks);
+const mockTranscript = vi.mocked(meetingTranscript);
 
 const STARTED = new Date(2026, 7, 7, 14, 0).getTime();
 
@@ -42,6 +51,10 @@ beforeEach(() => {
   mockRename.mockReset();
   mockList.mockResolvedValue([meeting()]);
   mockRename.mockResolvedValue(undefined);
+  mockLinks.mockReset();
+  mockTranscript.mockReset();
+  mockLinks.mockResolvedValue([]);
+  mockTranscript.mockResolvedValue([]);
 });
 
 describe("durationLabel", () => {
@@ -191,6 +204,17 @@ describe("MeetingDocument", () => {
     fireEvent.keyDown(input, { key: "Escape" });
 
     expect(mockRename).not.toHaveBeenCalled();
+    expect(
+      await screen.findByRole("heading", { name: "Vendor call" }),
+    ).toBeInTheDocument();
+  });
+
+  it("still opens when links or transcript cannot be read", async () => {
+    // The reveal is the only thing that depends on these. Losing it must not
+    // cost the document, which is where the notes are typed.
+    mockLinks.mockRejectedValue("no such table: links");
+    mockTranscript.mockRejectedValue("no such table: utterances");
+    render(<MeetingDocument meetingId="m1" onBack={() => {}} />);
     expect(
       await screen.findByRole("heading", { name: "Vendor call" }),
     ).toBeInTheDocument();

@@ -818,6 +818,15 @@ living in a second permanent panel.
 **Done when:** the link is discoverable without a transcript pane on screen.
 **Why not a pane:** a pane that is always present is furniture, and furniture is
 ignored. This is the product's differentiator and should appear where the eye already is.
+**Status:** ✅ Done in one direction. Hovering a note reveals the moment it came from —
+speaker, offset, the line itself, and *how* the link was decided ("by timing", "by
+meaning", "cited by the summary"), because a clock-made link and a meaning-made link
+deserve different amounts of trust and only the reader can judge which landed.
+
+**The reverse direction is not built, and cannot be here.** Hovering a transcript line to
+highlight its note needs a transcript on screen, and the document deliberately has none.
+That half lives on in the workbench, where `Notepad`'s `highlightedBlocks` still drives
+it. If a transcript view returns to the document, it comes back with it.
 
 ### G36 · Type and spacing
 **Depends on:** G30–G35
