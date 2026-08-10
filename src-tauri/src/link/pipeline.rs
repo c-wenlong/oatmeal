@@ -574,7 +574,9 @@ mod seed_tools {
             let conn = db.connection();
             let mut stmt = conn
                 .prepare(
-                    "SELECT id FROM meetings WHERE title LIKE '%[seeded]%' ORDER BY started_at",
+                    // Keyed on the id prefix, not a title marker. Titles are the
+                    // user's and get cleaned up; ids do not change.
+                    "SELECT id FROM meetings WHERE id LIKE 'seed%' ORDER BY started_at",
                 )
                 .unwrap();
             let rows = stmt
