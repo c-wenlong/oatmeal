@@ -4,11 +4,14 @@ import {
   GoogleCalendarCard,
   connectMessage,
   looksLikeClientId,
+  looksLikeClientSecret,
+  missingHalf,
 } from "./GoogleCalendarCard";
 import {
   gcalConnect,
   gcalDisconnect,
   gcalSetClientId,
+  gcalSetClientSecret,
   gcalSetEnabled,
   gcalSettings,
 } from "../lib/tauri";
@@ -17,6 +20,7 @@ import type { GcalSettings } from "../types";
 vi.mock("../lib/tauri", () => ({
   gcalSettings: vi.fn(),
   gcalSetClientId: vi.fn(),
+  gcalSetClientSecret: vi.fn(),
   gcalSetEnabled: vi.fn(),
   gcalConnect: vi.fn(),
   gcalDisconnect: vi.fn(),
@@ -24,6 +28,7 @@ vi.mock("../lib/tauri", () => ({
 
 const mockGet = vi.mocked(gcalSettings);
 const mockSetId = vi.mocked(gcalSetClientId);
+const mockSetSecret = vi.mocked(gcalSetClientSecret);
 const mockSetEnabled = vi.mocked(gcalSetEnabled);
 const mockConnect = vi.mocked(gcalConnect);
 const mockDisconnect = vi.mocked(gcalDisconnect);
@@ -31,15 +36,29 @@ const mockDisconnect = vi.mocked(gcalDisconnect);
 const CLIENT_ID = "123-abc.apps.googleusercontent.com";
 
 function settings(over: Partial<GcalSettings> = {}): GcalSettings {
-  return { connected: false, clientId: CLIENT_ID, enabled: false, ...over };
+  return {
+    connected: false,
+    clientId: CLIENT_ID,
+    hasClientSecret: true,
+    enabled: false,
+    ...over,
+  };
 }
 
 beforeEach(() => {
-  for (const m of [mockGet, mockSetId, mockSetEnabled, mockConnect, mockDisconnect]) {
+  for (const m of [
+    mockGet,
+    mockSetId,
+    mockSetSecret,
+    mockSetEnabled,
+    mockConnect,
+    mockDisconnect,
+  ]) {
     m.mockReset();
   }
   mockGet.mockResolvedValue(settings());
   mockSetId.mockResolvedValue(undefined);
+  mockSetSecret.mockResolvedValue(undefined);
   mockSetEnabled.mockResolvedValue(undefined);
   mockConnect.mockResolvedValue({ connected: true, reason: null });
   mockDisconnect.mockResolvedValue(undefined);
@@ -96,9 +115,57 @@ describe("GoogleCalendarCard", () => {
     ).toBeInTheDocument();
   });
 
-  it("says no secret is needed", async () => {
+  it("says the secret is required, and where it goes", async () => {
+    // This card used to say the opposite. Google requires client_secret for
+    // Desktop app clients whether or not PKCE is used, and the promise that it
+    // was unnecessary made the Connect button impossible to succeed at.
     render(<GoogleCalendarCard />);
-    expect(await screen.findByText(/no secret to copy/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Google requires the secret here/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/goes to your Keychain/i)).toBeInTheDocument();
+  });
+
+  it("warns when an id was pasted into the secret field", async () => {
+    // The two fields take two long opaque strings. Swapped, they fail at the
+    // token exchange — after consent, with an opaque Google error.
+    render(<GoogleCalendarCard />);
+    fireEvent.change(await screen.findByLabelText(/google oauth client secret/i), {
+      target: { value: CLIENT_ID },
+    });
+    expect(screen.getByText(/does not look like a client/i)).toBeInTheDocument();
+  });
+
+  it("saves a client secret and does not keep it in the field", async () => {
+    render(<GoogleCalendarCard />);
+    const field = await screen.findByLabelText(/google oauth client secret/i);
+    fireEvent.change(field, { target: { value: "GOCSPX-shh" } });
+    fireEvent.click(screen.getAllByRole("button", { name: /save/i })[1]);
+
+    await waitFor(() => expect(mockSetSecret).toHaveBeenCalledWith("GOCSPX-shh"));
+    // Left in the form it would exist in one more place for no benefit.
+    await waitFor(() => expect(field).toHaveValue(""));
+  });
+
+  it("never renders the stored secret", async () => {
+    // It is write-only: the backend reports that one is set, not what it is.
+    mockGet.mockResolvedValue(settings({ hasClientSecret: true }));
+    render(<GoogleCalendarCard />);
+    const field = await screen.findByLabelText(/google oauth client secret/i);
+    expect(field).toHaveValue("");
+    expect(field).toHaveAttribute("type", "password");
+  });
+
+  it("will not connect with only half the credential", async () => {
+    // Both halves or nothing: Google fails the exchange *after* consent, which
+    // is the worst possible place for the user to learn a field was blank.
+    mockGet.mockResolvedValue(settings({ hasClientSecret: false }));
+    render(<GoogleCalendarCard />);
+
+    expect(
+      await screen.findByRole("button", { name: /connect google calendar/i }),
+    ).toBeDisabled();
+    expect(screen.getByText(/Save the client secret first/)).toBeInTheDocument();
   });
 
   it("warns when a secret was pasted instead of an id", async () => {
@@ -116,7 +183,8 @@ describe("GoogleCalendarCard", () => {
     fireEvent.change(await screen.findByLabelText(/google oauth client id/i), {
       target: { value: CLIENT_ID },
     });
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    // Two Save buttons now — the id's is the first.
+    fireEvent.click(screen.getAllByRole("button", { name: /save/i })[0]);
 
     await waitFor(() => expect(mockSetId).toHaveBeenCalledWith(CLIENT_ID));
   });
@@ -128,7 +196,7 @@ describe("GoogleCalendarCard", () => {
     expect(
       await screen.findByRole("button", { name: /connect google calendar/i }),
     ).toBeDisabled();
-    expect(screen.getByText(/Save a client id first/)).toBeInTheDocument();
+    expect(screen.getByText(/Save the client id first/)).toBeInTheDocument();
   });
 
   it("runs the flow and reports success", async () => {
@@ -174,5 +242,36 @@ describe("GoogleCalendarCard", () => {
     fireEvent.click(await screen.findByRole("button", { name: /disconnect/i }));
     await waitFor(() => expect(mockDisconnect).toHaveBeenCalled());
     expect(await screen.findByText(/token was deleted/i)).toBeInTheDocument();
+  });
+});
+
+describe("missingHalf", () => {
+  it("names which half is missing, not just that something is", () => {
+    // The secret's field is blank even when one is stored, so "fill in the
+    // fields" leaves the user staring at a form that looks finished.
+    expect(missingHalf({ clientId: null, hasClientSecret: true })).toBe(
+      "Save the client id first.",
+    );
+    expect(missingHalf({ clientId: "x", hasClientSecret: false })).toBe(
+      "Save the client secret first.",
+    );
+    expect(missingHalf({ clientId: null, hasClientSecret: false })).toBe(
+      "Save the client id and the client secret first.",
+    );
+  });
+
+  it("says nothing when both are there", () => {
+    expect(missingHalf({ clientId: "x", hasClientSecret: true })).toBe("");
+  });
+});
+
+describe("looksLikeClientSecret", () => {
+  it("knows Google's prefix", () => {
+    expect(looksLikeClientSecret("GOCSPX-abc")).toBe(true);
+    expect(looksLikeClientSecret("  GOCSPX-abc  ")).toBe(true);
+  });
+
+  it("rejects a client id", () => {
+    expect(looksLikeClientSecret("123-abc.apps.googleusercontent.com")).toBe(false);
   });
 });

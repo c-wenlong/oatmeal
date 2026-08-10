@@ -15,6 +15,14 @@ use crate::llm::keys::KeyStore;
 /// read someone's calendar has no business in SQLite.
 pub const REFRESH_TOKEN_KEY: &str = "google-calendar-refresh";
 
+/// Keychain reference for the OAuth client secret.
+///
+/// Google calls this non-confidential for installed apps, and it is — anyone
+/// can pull it out of the binary of a shipped app. That is an argument about
+/// what it protects, not a licence to write it to a plain file next to the
+/// user's notes. It sits with the refresh token.
+pub const CLIENT_SECRET_KEY: &str = "google-calendar-client-secret";
+
 /// How long to wait for the browser before giving up.
 ///
 /// Generous: the user may have to pick between several Google accounts, and a
@@ -76,7 +84,18 @@ impl Connection {
             .map_err(|e| TokenError::Rejected(e.to_string()))?
             .ok_or(TokenError::NotConnected)?;
 
-        let refreshed = token::refresh(http, client_id, &refresh_token, now_ms).await?;
+        let client_secret = keys
+            .get(CLIENT_SECRET_KEY)
+            .map_err(|e| TokenError::Rejected(e.to_string()))?;
+
+        let refreshed = token::refresh(
+            http,
+            client_id,
+            client_secret.as_deref(),
+            &refresh_token,
+            now_ms,
+        )
+        .await?;
         let access = refreshed.access_token.clone();
         if let Ok(mut guard) = self.tokens.lock() {
             *guard = Some(refreshed);

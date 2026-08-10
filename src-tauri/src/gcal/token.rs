@@ -106,14 +106,54 @@ async fn post(
     serde_json::from_str(&body).map_err(|e| TokenError::Malformed(e.to_string()))
 }
 
+/// The form body for redeeming a code.
+///
+/// Split out from the request so the one thing that is easy to get wrong can be
+/// asserted without a network: an **absent** `client_secret` and an **empty**
+/// one are different requests, and Google answers the empty one with the same
+/// `invalid_request` it gives for a missing one.
+fn exchange_params<'a>(
+    client_id: &'a str,
+    client_secret: Option<&'a str>,
+    code: &'a str,
+    verifier: &'a str,
+    redirect_uri: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    let mut params = vec![
+        ("grant_type", "authorization_code"),
+        ("client_id", client_id),
+        ("code", code),
+        ("code_verifier", verifier),
+        ("redirect_uri", redirect_uri),
+    ];
+    if let Some(secret) = client_secret.filter(|s| !s.trim().is_empty()) {
+        params.push(("client_secret", secret));
+    }
+    params
+}
+
 /// Redeems the authorization code.
 ///
-/// No `client_secret`: Google documents it as inapplicable to installed apps,
-/// and the PKCE verifier is what proves this is the client that started the
-/// flow.
+/// **`client_secret` is required for Google's Desktop app clients**, PKCE or
+/// not. Google documents the secret as *not confidential* for installed apps —
+/// which is true, and which this code originally misread as *not required*.
+/// The token endpoint answers a request without it:
+///
+/// ```text
+/// {"error": "invalid_request", "error_description": "client_secret is missing."}
+/// ```
+///
+/// So it is sent, and stored in the Keychain rather than SQLite: Google calling
+/// it non-confidential is not a reason to leave a credential in a plain file.
+/// PKCE stays, and is still doing its job — the secret is extractable from any
+/// desktop binary, and the verifier is what an interceptor cannot produce.
+///
+/// Optional because it genuinely is for some client types: Google issues no
+/// secret at all for iOS and Android clients.
 pub async fn exchange(
     http: &reqwest::Client,
     client_id: &str,
+    client_secret: Option<&str>,
     code: &str,
     verifier: &str,
     redirect_uri: &str,
@@ -121,13 +161,7 @@ pub async fn exchange(
 ) -> Result<Tokens, TokenError> {
     let response = post(
         http,
-        &[
-            ("grant_type", "authorization_code"),
-            ("client_id", client_id),
-            ("code", code),
-            ("code_verifier", verifier),
-            ("redirect_uri", redirect_uri),
-        ],
+        &exchange_params(client_id, client_secret, code, verifier, redirect_uri),
     )
     .await?;
 
@@ -143,20 +177,38 @@ pub async fn exchange(
     Ok(to_tokens(response, now_ms))
 }
 
+/// The form body for a refresh. Same absent-versus-empty care as the exchange.
+fn refresh_params<'a>(
+    client_id: &'a str,
+    client_secret: Option<&'a str>,
+    refresh_token: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    let mut params = vec![
+        ("grant_type", "refresh_token"),
+        ("client_id", client_id),
+        ("refresh_token", refresh_token),
+    ];
+    if let Some(secret) = client_secret.filter(|s| !s.trim().is_empty()) {
+        params.push(("client_secret", secret));
+    }
+    params
+}
+
 /// Trades the refresh token for a new access token.
+///
+/// Takes the secret for the same reason `exchange` does. Omitting it here would
+/// be the worse bug of the two: the connection would appear to work and then
+/// break an hour later, when nobody is watching.
 pub async fn refresh(
     http: &reqwest::Client,
     client_id: &str,
+    client_secret: Option<&str>,
     refresh_token: &str,
     now_ms: i64,
 ) -> Result<Tokens, TokenError> {
     let response = post(
         http,
-        &[
-            ("grant_type", "refresh_token"),
-            ("client_id", client_id),
-            ("refresh_token", refresh_token),
-        ],
+        &refresh_params(client_id, client_secret, refresh_token),
     )
     .await?;
 
@@ -229,6 +281,59 @@ mod tests {
         // Either unreachable or rejected depending on the network; what must
         // not happen is a panic or a hang.
         assert!(err.is_some());
+    }
+
+    /// What a param list carries for one key.
+    fn value<'a>(params: &[(&'a str, &'a str)], key: &str) -> Option<&'a str> {
+        params.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+    }
+
+    #[test]
+    fn the_exchange_carries_the_client_secret() {
+        // Google's Desktop app clients require it, PKCE or not. Leaving it out
+        // is what produced `invalid_request: client_secret is missing.` and a
+        // Connect button that could never succeed.
+        let params = exchange_params("id", Some("shh"), "code", "verifier", "http://127.0.0.1:1");
+        assert_eq!(value(&params, "client_secret"), Some("shh"));
+        // And PKCE is still there — the secret does not replace it.
+        assert_eq!(value(&params, "code_verifier"), Some("verifier"));
+    }
+
+    #[test]
+    fn a_refresh_carries_it_too() {
+        // Sending it only on the exchange would connect fine and then break an
+        // hour later, on the first refresh, with nobody watching.
+        let params = refresh_params("id", Some("shh"), "rt");
+        assert_eq!(value(&params, "client_secret"), Some("shh"));
+    }
+
+    #[test]
+    fn an_empty_secret_is_left_out_rather_than_sent_empty() {
+        // The same empty-versus-absent trap that broke signing and notarization
+        // in CI twice. `client_secret=` is not "no secret" to Google; it is a
+        // secret that is wrong.
+        for empty in ["", "   "] {
+            let params = exchange_params("id", Some(empty), "c", "v", "r");
+            assert_eq!(value(&params, "client_secret"), None);
+            assert_eq!(
+                value(&refresh_params("id", Some(empty), "rt"), "client_secret"),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn a_client_with_no_secret_sends_none() {
+        // Google issues no secret at all for iOS and Android clients, so the
+        // parameter has to be genuinely optional rather than defaulted.
+        assert_eq!(
+            value(&exchange_params("id", None, "c", "v", "r"), "client_secret"),
+            None
+        );
+        assert_eq!(
+            value(&refresh_params("id", None, "rt"), "client_secret"),
+            None
+        );
     }
 
     #[test]

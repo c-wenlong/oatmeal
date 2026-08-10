@@ -432,6 +432,17 @@ export function gcalSetClientId(clientId: string): Promise<void> {
   return invoke<void>("gcal_set_client_id", { clientId });
 }
 
+/**
+ * The client secret Google issues alongside the id.
+ *
+ * Required by Google's token endpoint for Desktop app clients, PKCE or not.
+ * Stored in the Keychain and never read back — the settings only report
+ * whether one is set.
+ */
+export function gcalSetClientSecret(clientSecret: string): Promise<void> {
+  return invoke<void>("gcal_set_client_secret", { clientSecret });
+}
+
 export function gcalSetEnabled(enabled: boolean): Promise<void> {
   return invoke<void>("gcal_set_enabled", { enabled });
 }

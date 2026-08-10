@@ -3,6 +3,7 @@ import {
   gcalConnect,
   gcalDisconnect,
   gcalSetClientId,
+  gcalSetClientSecret,
   gcalSetEnabled,
   gcalSettings,
 } from "../lib/tauri";
@@ -10,10 +11,36 @@ import type { GcalSettings } from "../types";
 
 /** Whether a string looks like a Google OAuth client id. */
 export function looksLikeClientId(value: string): boolean {
-  // Not validation for its own sake: pasting the *secret* into this field is
-  // the mistake people actually make, and it fails much later with an opaque
-  // Google error. A client id always ends in this suffix.
+  // Not validation for its own sake: the two fields below take two long opaque
+  // strings, and swapping them fails much later with an opaque Google error.
+  // A client id always ends in this suffix.
   return value.trim().endsWith(".apps.googleusercontent.com");
+}
+
+/** Whether a string looks like a Google OAuth client secret. */
+export function looksLikeClientSecret(value: string): boolean {
+  // Google prefixes them `GOCSPX-`. Same reason as above, in the other
+  // direction: a client id pasted here is caught before Google sees it.
+  return value.trim().startsWith("GOCSPX-");
+}
+
+/**
+ * Which half of the credential is still missing.
+ *
+ * Named rather than a generic "fill in the fields": the two are saved
+ * separately and the secret's field is blank even once it is stored, so
+ * "something is missing" leaves the user staring at a form that looks done.
+ */
+export function missingHalf(settings: {
+  clientId: string | null;
+  hasClientSecret: boolean;
+}): string {
+  const missing = [
+    settings.clientId ? null : "client id",
+    settings.hasClientSecret ? null : "client secret",
+  ].filter(Boolean);
+  if (missing.length === 0) return "";
+  return `Save the ${missing.join(" and the ")} first.`;
 }
 
 /** What to say about a finished flow. */
@@ -26,6 +53,15 @@ export function connectMessage(connected: boolean, reason: string | null): strin
   if (reason.includes("mismatched state")) {
     return "The browser came back with something Oatmeal did not start. Nothing was connected.";
   }
+  if (reason.includes("invalid_request")) {
+    // What Google says when the credential is incomplete or mismatched. The
+    // bare word is useless: it arrives *after* consent, so the user has every
+    // reason to think they did their part — and they did.
+    return (
+      "Google rejected the credential. Check that the client id and secret are from " +
+      "the same OAuth client, and that it is a Desktop app client."
+    );
+  }
   return reason;
 }
 
@@ -36,13 +72,21 @@ export function connectMessage(connected: boolean, reason: string | null): strin
  * is already in Calendar.app, EventKit reads it with no accounts and no tokens,
  * and this is unnecessary. It exists for calendars macOS does not sync.
  *
- * No client secret is involved. Google treats installed apps as public clients,
- * and PKCE does the job the secret used to — so nothing confidential ships in
- * the binary, and the client id below is the user's own.
+ * Both halves of the credential are the user's own, created in their own Google
+ * Cloud project. Nothing confidential ships in the binary.
+ *
+ * The secret **is** required, which this card used to say it wasn't. Google
+ * documents it as non-confidential for installed apps — true, and not the same
+ * as optional. Its token endpoint answers a request without it with
+ * `invalid_request: client_secret is missing.` PKCE is still what does the real
+ * work, since a secret shipped in a desktop binary protects nothing.
  */
 export function GoogleCalendarCard() {
   const [settings, setSettings] = useState<GcalSettings | null>(null);
   const [clientId, setClientId] = useState("");
+  /* Never seeded from settings — the secret is write-only. What comes back is
+     whether one is stored, not what it is. */
+  const [clientSecret, setClientSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -62,6 +106,14 @@ export function GoogleCalendarCard() {
 
   async function saveClientId() {
     await gcalSetClientId(clientId);
+    await refresh();
+  }
+
+  async function saveClientSecret() {
+    await gcalSetClientSecret(clientSecret);
+    // Cleared on save: leaving the secret sitting in a form field is one more
+    // place it exists for no benefit.
+    setClientSecret("");
     await refresh();
   }
 
@@ -97,6 +149,11 @@ export function GoogleCalendarCard() {
   }
 
   const idLooksWrong = clientId.trim() !== "" && !looksLikeClientId(clientId);
+  const secretLooksWrong =
+    clientSecret.trim() !== "" && !looksLikeClientSecret(clientSecret);
+  /* Both halves, or Connect fails at the token exchange after the user has
+     already been through consent — the worst possible place to find out. */
+  const ready = Boolean(settings.clientId) && settings.hasClientSecret;
 
   return (
     <section className="card" data-testid="gcal-card">
@@ -123,14 +180,32 @@ export function GoogleCalendarCard() {
       {idLooksWrong && (
         <p className="empty-note">
           That does not look like a client <em>id</em> — it should end in
-          <code> .apps.googleusercontent.com</code>. Oatmeal never needs the client
-          secret.
+          <code> .apps.googleusercontent.com</code>. The secret goes in the field below.
         </p>
       )}
+
+      <div className="row">
+        <input
+          type="password"
+          value={clientSecret}
+          placeholder={settings.hasClientSecret ? "client secret — stored" : "GOCSPX-…"}
+          aria-label="google oauth client secret"
+          onChange={(e) => setClientSecret(e.target.value)}
+          style={{ flex: 1 }}
+        />
+        <button onClick={() => void saveClientSecret()}>Save</button>
+      </div>
+      {secretLooksWrong && (
+        <p className="empty-note">
+          That does not look like a client <em>secret</em> — Google prefixes them
+          <code> GOCSPX-</code>.
+        </p>
+      )}
+
       <p className="empty-note">
         Create a <strong>Desktop app</strong> OAuth client in Google Cloud Console and
-        paste its id. There is no secret to copy: Oatmeal uses PKCE, so nothing
-        confidential is stored in the app.
+        paste both halves. Google requires the secret here even though PKCE is in use;
+        it goes to your Keychain, never to a file, and is never shown again.
       </p>
 
       <div className="row">
@@ -139,15 +214,13 @@ export function GoogleCalendarCard() {
         ) : (
           <button
             className="primary"
-            disabled={busy || !settings.clientId}
+            disabled={busy || !ready}
             onClick={() => void connect()}
           >
             {busy ? "Waiting for browser…" : "Connect Google Calendar"}
           </button>
         )}
-        {!settings.clientId && (
-          <span className="empty-note">Save a client id first.</span>
-        )}
+        {!ready && <span className="empty-note">{missingHalf(settings)}</span>}
       </div>
 
       {settings.connected && (

@@ -7,8 +7,10 @@
 //! attacker who intercepts the authorization code cannot redeem it without that
 //! pre-image.
 //!
-//! So Oatmeal ships a client *id*, which Google documents as non-confidential
-//! for installed apps, and no secret at all.
+//! Google still requires a `client_secret` in the token exchange for Desktop
+//! app clients — see `token::exchange`. That does not undo any of the above:
+//! the secret is the user's own rather than shipped, and PKCE remains the part
+//! an interceptor cannot forge.
 
 use base64::Engine;
 use sha2::{Digest, Sha256};

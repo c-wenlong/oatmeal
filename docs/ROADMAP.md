@@ -429,10 +429,31 @@ Built on request, as an **addition** to EventKit rather than a replacement: a
 calendar already in Calendar.app needs no account and no token, and that path stays
 the default. This covers the case EventKit cannot reach.
 
-**PKCE with a loopback redirect, and no client secret.** Google documents the secret
-as inapplicable to installed apps, and PKCE replaces what it was doing — the app
-proves it started the flow by producing the pre-image of a hash it sent earlier, so
-nothing confidential ships in the binary. What ships is the user's own client *id*.
+**PKCE with a loopback redirect.** The app proves it started the flow by producing the
+pre-image of a hash it sent earlier, so nothing confidential ships in the binary. Both
+halves of the credential are the user's own, from their own Google Cloud project.
+
+**Correction, found in use.** This shipped without a `client_secret` at all, on the
+reading that Google documents it as inapplicable to installed apps. Google documents it
+as *non-confidential*, which is not the same as *not required*. Its token endpoint
+answers a request without one:
+
+```
+{"error": "invalid_request", "error_description": "client_secret is missing."}
+```
+
+So the Connect button could never have succeeded, and the failure landed *after*
+consent — the user does everything right, then gets one opaque word. The secret is now
+asked for, stored in the Keychain beside the refresh token, and sent on both the
+exchange and the refresh. Sending it on only the exchange would have been the worse
+bug: connected fine, dead an hour later.
+
+PKCE stays and still carries the security. A secret shipped in a desktop binary can be
+read out with `strings`; the verifier is the part an interceptor cannot produce. It is
+kept optional in the plumbing because Google issues no secret at all for iOS and
+Android clients — and the tests assert that an *empty* secret is omitted rather than
+sent blank, which is the same empty-versus-absent trap that broke signing and
+notarization in CI.
 
 Three security properties, each with a test that fails when it is removed:
 

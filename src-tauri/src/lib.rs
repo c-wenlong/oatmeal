@@ -494,6 +494,8 @@ pub struct GcalSettings {
     /// only knowable by using it.
     pub connected: bool,
     pub client_id: Option<String>,
+    /// Whether a client secret is stored. Never the secret itself.
+    pub has_client_secret: bool,
     pub enabled: bool,
 }
 
@@ -511,6 +513,9 @@ fn gcal_settings(state: tauri::State<'_, AppState>) -> Result<GcalSettings, Stri
     Ok(GcalSettings {
         connected: state.gcal.is_connected(state.keys.as_ref()),
         client_id: gcal_client_id(conn),
+        // Whether one is stored, never the value. The card needs to show
+        // "set"; it has no business reading it back out of the Keychain.
+        has_client_secret: state.keys.has(gcal::connection::CLIENT_SECRET_KEY),
         enabled: repo::get_setting(conn, SETTING_GCAL_ENABLED)
             .ok()
             .flatten()
@@ -523,6 +528,28 @@ fn gcal_settings(state: tauri::State<'_, AppState>) -> Result<GcalSettings, Stri
 fn gcal_set_client_id(state: tauri::State<'_, AppState>, client_id: String) -> Result<(), String> {
     let db = state.db.lock().map_err(|_| "db lock poisoned")?;
     repo::set_setting(db.connection(), SETTING_GCAL_CLIENT_ID, client_id.trim())
+        .map_err(|e| e.to_string())
+}
+
+/// Stores the OAuth client secret. Never returned, logged, or echoed back.
+///
+/// An empty string clears it rather than storing a blank — `client_secret=` is
+/// not "no secret" to Google, it is a wrong one.
+#[tauri::command]
+fn gcal_set_client_secret(
+    state: tauri::State<'_, AppState>,
+    client_secret: String,
+) -> Result<(), String> {
+    let secret = client_secret.trim();
+    if secret.is_empty() {
+        return state
+            .keys
+            .delete(gcal::connection::CLIENT_SECRET_KEY)
+            .map_err(|e| e.to_string());
+    }
+    state
+        .keys
+        .set(gcal::connection::CLIENT_SECRET_KEY, secret)
         .map_err(|e| e.to_string())
 }
 
@@ -545,14 +572,18 @@ fn gcal_set_enabled(state: tauri::State<'_, AppState>, enabled: bool) -> Result<
 /// boundary for no gain.
 #[tauri::command]
 async fn gcal_connect(app: tauri::AppHandle) -> Result<gcal::connection::FlowOutcome, String> {
-    let (client_id, http) = {
+    let (client_id, client_secret, http) = {
         let state = app.state::<AppState>();
         let db = state.db.lock().map_err(|_| "db lock poisoned")?;
         let client_id = gcal_client_id(db.connection()).ok_or(
             "no Google OAuth client id is set — create a Desktop app client in Google \
              Cloud Console and paste its id",
         )?;
-        (client_id, state.http.clone())
+        let client_secret = state
+            .keys
+            .get(gcal::connection::CLIENT_SECRET_KEY)
+            .map_err(|e| e.to_string())?;
+        (client_id, client_secret, state.http.clone())
     };
 
     let for_exchange = client_id.clone();
@@ -567,6 +598,7 @@ async fn gcal_connect(app: tauri::AppHandle) -> Result<gcal::connection::FlowOut
                 tauri::async_runtime::block_on(gcal::token::exchange(
                     &http,
                     &for_exchange,
+                    client_secret.as_deref(),
                     code,
                     verifier,
                     redirect_uri,
@@ -1001,9 +1033,9 @@ pub const SETTING_MIC_ENABLED: &str = "detect.mic_enabled";
 pub const SETTING_CALENDAR_ENABLED: &str = "detect.calendar_enabled";
 /// How long audio is kept. `"forever"` or a day count.
 pub const SETTING_RETENTION: &str = "privacy.audio_retention";
-/// The user's own Google OAuth client id. Not a secret — Google documents it
-/// as inapplicable-to-confidential for installed apps — so it lives in
-/// settings rather than the Keychain.
+/// The user's own Google OAuth client id. Not a secret, so it lives in settings
+/// rather than the Keychain. Its other half does not — see
+/// `gcal::connection::CLIENT_SECRET_KEY`.
 pub const SETTING_GCAL_CLIENT_ID: &str = "gcal.client_id";
 /// Whether the Google calendar source is switched on.
 pub const SETTING_GCAL_ENABLED: &str = "gcal.enabled";
@@ -2578,6 +2610,7 @@ pub fn run() {
             notion_export,
             gcal_settings,
             gcal_set_client_id,
+            gcal_set_client_secret,
             gcal_set_enabled,
             gcal_connect,
             gcal_disconnect,

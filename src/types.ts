@@ -427,6 +427,8 @@ export interface GcalSettings {
   /** Whether a refresh token is stored — not whether it still works. */
   connected: boolean;
   clientId: string | null;
+  /** Whether a client secret is stored. Never the secret itself. */
+  hasClientSecret: boolean;
   enabled: boolean;
 }
 
