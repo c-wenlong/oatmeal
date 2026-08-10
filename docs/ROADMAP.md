@@ -14,7 +14,7 @@
 | 5 · Autonomy | G19–G23 | ✅ **Complete** (see notes) |
 | 6 · Corpus | G24–G25 | ✅ **Complete** |
 | 7 · Ship | G26–G29 | ✅ **Complete** (G29: signed + notarized 2026-08-07; auto-update unproven) |
-| 8 · The interface | G30–G36 | 🚧 **In progress** — see [ui-teardown.md](./ui-teardown.md) |
+| 8 · The interface | G30–G39 | 🚧 **In progress** — see [ui-teardown.md](./ui-teardown.md) |
 
 **Speaker bleed is fixed** (G2 finding #2, carried since Phase 0). `EchoSuppressor`
 drops mic lines that are the speakers coming back through the room. Hardware AEC was
@@ -881,6 +881,33 @@ headings; reading leading in the document canvas.
 **Light and dark were already right** and were left alone. The app follows
 `prefers-color-scheme`, which is what the iOS screens showed Granola doing — it owns no
 palette and follows the platform.
+
+### G39 · A sidebar for settings
+**Depends on:** G33
+**Build:** Granola's Preferences shape — a sidebar of panes on the left, one pane at a
+time on the right — instead of one long scrolling page.
+**Done when:** every setting is one click from the sidebar and none of them requires
+scrolling past the others to find.
+**Status:** ✅ Done. Seven panes: Capture, Detection, Calendar, Models, then Sharing and
+Recordings under **Data**, then About under **App**.
+
+Two things are worth writing down. The panes are **one list, `PANES`**, and both the
+sidebar and the content are generated from it — two lists would let a nav item exist
+with nothing behind it. And the risk in cutting one page into seven is not a bug that
+throws, it is a card that quietly stops being rendered anywhere; the test for that walks
+every pane and asserts the union of what it finds is exactly the six cards the old page
+had.
+
+`navGroups` builds groups from **consecutive runs** rather than bucketing by label, so a
+pane appended at the bottom cannot silently teleport into a group near the top because
+it happened to share a name. The current pane carries `aria-current="page"` — the tint
+alone is the kind of signal that disappears for a colour-blind reader.
+
+Detection keeps the disclosure it got last round, and its detail screen now sits beside
+the sidebar rather than replacing the screen. Leaving the pane closes the detail: coming
+back to Detection from Models should show Detection, not a sub-screen opened four panes
+ago. And the summary is fetched **only by the pane that shows it** — the About pane has
+no reason to call into Tauri to answer a question it never asks.
 
 ## Sequencing at a glance
 

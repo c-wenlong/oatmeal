@@ -91,7 +91,7 @@ function MainWindow() {
 
   if (view.screen === "settings") {
     return (
-      <main className="app">
+      <main className="app app--flush">
         <Settings onBack={() => setView({ screen: "library" })} />
       </main>
     );
