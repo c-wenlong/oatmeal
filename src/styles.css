@@ -1621,13 +1621,41 @@ input:focus {
 
 .askbar {
   position: fixed;
-  left: 50%;
+  /* Spans the window rather than being centred by a transform. A transformed
+     ancestor becomes the containing block for `position: fixed` descendants,
+     which confined the scrim below to the width of the bar itself — the first
+     attempt at this looked like it did nothing. */
+  left: 0;
+  right: 0;
   bottom: 1.25rem;
-  transform: translateX(-50%);
   display: flex;
+  justify-content: center;
   align-items: center;
   gap: 0.5rem;
   z-index: 20;
+  /* The bar is now as wide as the window, so it must not swallow clicks meant
+     for the document behind it. The controls take them back. */
+  pointer-events: none;
+}
+
+.askbar > * {
+  pointer-events: auto;
+}
+
+/* A scrim under the bar. The controls are separate pills with gaps between
+   them, and document text scrolling past showed through those gaps — legible
+   neither as text nor as chrome. Fades rather than cuts, so nothing looks
+   clipped at a hard edge. */
+.askbar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1.25rem;
+  height: 6.5rem;
+  background: linear-gradient(to top, var(--bg) 45%, transparent);
+  pointer-events: none;
+  z-index: -1;
 }
 
 /* The record control is part of the bar now, so it stops positioning itself. */
