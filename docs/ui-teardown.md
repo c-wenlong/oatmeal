@@ -98,6 +98,33 @@ Oatmeal spends a large filled orange button plus a separate select on the same f
 
 ---
 
+## 3b. The iOS app, for what it is worth
+
+Mobbin's Granola iOS set was checked on 2026-08-07. **Four of its 112 screens are
+visible without a paid account**; the rest are blurred behind Pro, so this is a
+partial reading and the desktop captures above remain the primary reference —
+which is right anyway, since Oatmeal is a desktop app and iOS would teach the wrong
+layout.
+
+What the free screens add:
+
+- **The iOS app is light** (cream, roughly #f5f2ec) where the desktop app I captured
+  was dark. Granola evidently follows the platform rather than owning one palette.
+- **`Coming up` is confirmed as a real, prominent pattern**, not an artefact of one
+  screenshot: a small grey label, then a card with a date chip — month above day,
+  month in red — the event title, and its time.
+- **Groups are labelled relatively**: "Earlier today", not a date. This matches the
+  Today / Yesterday / date fallback G30 already implements.
+- The chat entry sits bottom-centre again — `Ask anything` — beside a compose button
+  for a new note.
+- On iOS the meeting rows *are* cards, white on cream. On desktop they are
+  borderless. The desktop treatment is the one Oatmeal follows.
+
+Nothing here changes the plan. It is corroboration plus one detail worth having: the
+date chip in `Coming up`, which is still unbuilt in G30.
+
+---
+
 ## 4. Mapping
 
 | Oatmeal today | Target |
