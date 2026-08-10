@@ -1919,31 +1919,75 @@ input:focus {
    no other blue and no other 13px anything. */
 
 .settings .tuner-row {
-  display: flex;
+  /* Grid, not flex: the base rule is `220px 1fr`, which parks the control at
+     the start of a wide column instead of at the end of the row. `1fr auto`
+     puts the label on the left and the control hard right, whatever its size,
+     so the controls line up down the page. */
+  display: grid;
+  grid-template-columns: 1fr auto;
   align-items: center;
-  justify-content: space-between;
   gap: var(--s-4);
   padding: var(--s-3) 0;
   border-top: 1px solid var(--border);
   font-size: var(--t-body);
+  color: var(--text);
 }
 
 .settings .tuner-row:first-of-type {
   border-top: 0;
 }
 
-/* accent-color is one line and gets the checkbox, the radio and the range
-   track for free — worth more than any amount of hand-built switch. */
-.settings input[type="checkbox"],
 .settings input[type="range"] {
   accent-color: var(--accent);
 }
 
+/* A switch, not a checkbox.
+   `accent-color` only tints the *checked* state; an unchecked system checkbox
+   stays a filled white square, which on a dark page is the brightest thing on
+   screen and reads as an error state rather than "off". */
 .settings input[type="checkbox"] {
-  width: 1rem;
-  height: 1rem;
-  flex: none;
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 2rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
   cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.settings input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 999px;
+  background: var(--muted);
+  transform: translateY(-50%);
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
+}
+
+.settings input[type="checkbox"]:checked {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-color: var(--accent);
+}
+
+.settings input[type="checkbox"]:checked::after {
+  background: var(--accent);
+  transform: translate(0.85rem, -50%);
+}
+
+.settings input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .settings input[type="range"] {
