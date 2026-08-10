@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   DbSelftest,
   HealthInfo,
@@ -48,8 +48,40 @@ import type { PermissionsSnapshot } from "./permissions";
  *
  * Everything the frontend asks of the Rust core goes through this module, so
  * tests mock exactly one boundary instead of stubbing `invoke` at every call
- * site.
+ * site. That same seam is what lets the UI run in a plain browser: outside
+ * Tauri there is no Rust core to call, so a dev-only fixture answers instead.
+ * See `previewBackend.ts` for what that does and does not prove.
  */
+async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  // Imported dynamically and behind `import.meta.env.DEV` so the fixtures are
+  // not merely inert in a release build but absent from it. A static import
+  // left the whole fake backend inside the shipped bundle — dead code, but
+  // dead code that answers questions about the user's data.
+  if (import.meta.env.DEV) {
+    const preview = await import("./previewBackend");
+    if (preview.browserPreview()) return preview.previewInvoke<T>(command, args);
+  }
+  return tauriInvoke<T>(command, args);
+}
+
+/**
+ * Subscribes, or does not.
+ *
+ * The events come from the Rust core, so in a browser there is nothing to
+ * subscribe to. Returning a no-op unsubscribe rather than throwing keeps every
+ * `useEffect` cleanup honest.
+ */
+async function listen<T>(
+  event: string,
+  handler: (event: { payload: T }) => void,
+): Promise<UnlistenFn> {
+  if (import.meta.env.DEV) {
+    const preview = await import("./previewBackend");
+    if (preview.browserPreview()) return () => {};
+  }
+  return tauriListen<T>(event, handler);
+}
+
 export function healthCheck(): Promise<HealthInfo> {
   return invoke<HealthInfo>("health_check");
 }

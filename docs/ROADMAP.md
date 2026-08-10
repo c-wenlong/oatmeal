@@ -994,3 +994,34 @@ G1 ──┬─ G2 (spike) ────────────┐
 **First useful build:** G8. **First build worth using daily:** G15. **First build that feels like Granola:** G22. **v1:** G29.
 
 Phases 3 (generation) and 4 (differentiator) can overlap with Phase 5 (autonomy) if work is ever parallelised — they share only the data layer. Everything in Phases 0–2 is strictly sequential.
+
+## Running the UI in a browser
+
+`pnpm dev`, then <http://localhost:1420>. Outside Tauri there is no Rust core, so
+`src/lib/previewBackend.ts` answers `invoke` from fixtures instead.
+
+| URL | State |
+|---|---|
+| `?preview=default` | two meetings, three calendars, Google not connected |
+| `?preview=fresh` | first launch: nothing granted, recorded or connected |
+| `?preview=google-connected` | Google connected, its row switched off |
+| `?preview=no-calendars` | detection on, EventKit silent — the state that looks like a bug |
+| `&connect=access_denied` | next Connect fails that way (any reason string works) |
+
+**What it proves.** Layout, navigation, every reachable state, what an error looks
+like, and that a write survives a re-read.
+
+**What it does not.** Anything below `src/lib/tauri.ts`: the Rust core, EventKit, the
+sidecar, the OAuth token exchange, the Keychain, the tray. The missing `client_secret`,
+the calendar filter and the menu bar label all lived down there and this harness would
+have caught none of them. A green browser session is not evidence that connecting a
+calendar works — it is evidence that the screen for connecting one behaves.
+
+Two things keep it honest: the fixtures are typed against the same `types.ts` the real
+code uses, so a shape change fails the build rather than lying; and an unmodelled
+command throws by name rather than resolving to `undefined`, which would show a broken
+screen for a reason unrelated to the code under test.
+
+It is `import.meta.env.DEV`-gated **and dynamically imported**, so it is absent from a
+release bundle rather than merely inert in one. A static import left the whole fake
+backend in the shipped JS.

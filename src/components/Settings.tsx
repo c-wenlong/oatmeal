@@ -158,8 +158,8 @@ export function Settings({ onBack }: { onBack: () => void }) {
                 <SettingsGroup label="Other accounts">
                   <SettingsDisclosure
                     icon="share"
-                    title="Google Calendar"
-                    subtitle="For a calendar the macOS Calendar app does not sync"
+                    title="Google account"
+                    subtitle="Connect a calendar the macOS Calendar app does not sync"
                     value={googleSummary(gcal)}
                     onOpen={() => setDetail("google")}
                   />

@@ -139,7 +139,7 @@ describe("Settings", () => {
       // Cards behind a disclosure are still reachable; the walk has to open
       // them or the test would call a hidden card "lost".
       for (const row of screen.queryAllByRole("button")) {
-        if (/Google Calendar|Meeting detection/.test(row.textContent ?? "")) {
+        if (/Google account|Meeting detection/.test(row.textContent ?? "")) {
           fireEvent.click(row);
           for (const id of EVERY_CARD) {
             if (screen.queryByTestId(id)) seen.add(id);
