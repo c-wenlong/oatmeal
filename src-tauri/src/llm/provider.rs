@@ -139,6 +139,13 @@ impl ProviderConfig {
         let base = self.base_url.trim_end_matches('/');
         match self.kind {
             ProviderKind::Anthropic => format!("{base}/v1/messages"),
+            // Ollama's own API rather than its OpenAI-compatible one. The
+            // compatible endpoint silently truncates any prompt over the
+            // server's default 4096-token window and cannot be told otherwise
+            // — `options` is not part of that wire format and is ignored. A
+            // 42-minute meeting arrives as a fraction of itself and comes back
+            // as a confident summary of the fraction. See `num_ctx`.
+            ProviderKind::Ollama => format!("{}/api/chat", base.trim_end_matches("/v1")),
             _ => format!("{base}/chat/completions"),
         }
     }
@@ -203,11 +210,59 @@ impl ChatRequest {
     }
 }
 
+/// Ollama's default context window, which is not nearly enough for a meeting.
+pub const OLLAMA_DEFAULT_NUM_CTX: usize = 4096;
+
+/// The largest window worth asking for.
+///
+/// The KV cache is allocated for whatever is requested, so asking for the
+/// maximum on every call would cost gigabytes to summarise a two-minute
+/// standup.
+pub const OLLAMA_MAX_NUM_CTX: usize = 32_768;
+
+/// A context window that will actually hold the prompt.
+///
+/// Ollama truncates rather than failing when a prompt exceeds the window — it
+/// keeps what fits and answers from that, so an over-long transcript produces
+/// a plausible summary of a sliver with citations that still resolve. There is
+/// no error to catch; the only defence is asking for a window big enough.
+///
+/// Sized from the characters actually being sent, at a deliberately pessimistic
+/// 3 characters per token — under-estimating brings back exactly the silent
+/// truncation this exists to prevent — plus room for the reply, rounded up to a
+/// power of two because that is how the cache is allocated anyway.
+pub fn num_ctx(prompt_chars: usize, reply_tokens: usize) -> usize {
+    let needed = prompt_chars / 3 + reply_tokens;
+    let mut window = OLLAMA_DEFAULT_NUM_CTX;
+    while window < needed && window < OLLAMA_MAX_NUM_CTX {
+        window *= 2;
+    }
+    window.min(OLLAMA_MAX_NUM_CTX)
+}
+
 /// Builds the JSON body for a provider. Pure, so every provider's wire format
 /// is testable without a network.
 pub fn build_body(config: &ProviderConfig, request: &ChatRequest) -> serde_json::Value {
     match config.kind {
         ProviderKind::Anthropic => super::anthropic::build_body(config, request),
+        ProviderKind::Ollama => {
+            let chars: usize = request.messages.iter().map(|m| m.content.len()).sum();
+            let mut body = serde_json::json!({
+                "model": config.model,
+                "messages": request.messages,
+                "stream": false,
+                "options": {
+                    "temperature": request.temperature,
+                    "num_ctx": num_ctx(chars, request.max_tokens as usize),
+                },
+            });
+            // Ollama takes the schema itself here, not a `response_format`
+            // wrapper, and constrains generation to it.
+            if let Some(schema) = &request.json_schema {
+                body["format"] = schema.clone();
+            }
+            body
+        }
         _ => {
             let mut body = serde_json::json!({
                 "model": config.model,
@@ -241,6 +296,14 @@ pub fn extract_text(
 ) -> Result<String, super::LlmError> {
     match kind {
         ProviderKind::Anthropic => super::anthropic::extract_text(body),
+        ProviderKind::Ollama => body
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| super::LlmError::Malformed {
+                detail: "no message.content in response".into(),
+            }),
         _ => body
             .get("choices")
             .and_then(|c| c.get(0))
@@ -257,6 +320,65 @@ pub fn extract_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_short_prompt_keeps_the_default_window() {
+        // Asking for the maximum every time allocates a KV cache measured in
+        // gigabytes to summarise a two-minute standup.
+        assert_eq!(num_ctx(1_000, 1_024), OLLAMA_DEFAULT_NUM_CTX);
+    }
+
+    #[test]
+    fn a_long_meeting_gets_a_window_that_holds_it() {
+        // The 42-minute meeting that exposed this: ~43,600 characters, about
+        // 12,800 tokens. At the default it arrived as 659 of them.
+        let window = num_ctx(43_600, 1_024);
+        assert!(
+            window >= 43_600 / 3 + 1_024,
+            "{window} would still truncate"
+        );
+        assert!(window.is_power_of_two());
+    }
+
+    #[test]
+    fn the_window_never_exceeds_the_ceiling() {
+        // A four-hour recording should ask for a lot and then stop asking.
+        assert_eq!(num_ctx(10_000_000, 1_024), OLLAMA_MAX_NUM_CTX);
+    }
+
+    #[test]
+    fn ollama_talks_to_its_own_api_not_the_compatible_one() {
+        // `/v1/chat/completions` ignores `options`, so the window cannot be set
+        // and the prompt is silently cut to 4096 tokens.
+        let mut config = ProviderConfig::preset(ProviderKind::Ollama);
+        assert_eq!(config.chat_url(), "http://localhost:11434/api/chat");
+        // And a user who typed the base URL with a trailing slash gets the same.
+        config.base_url = "http://localhost:11434/v1/".into();
+        assert_eq!(config.chat_url(), "http://localhost:11434/api/chat");
+    }
+
+    #[test]
+    fn the_ollama_body_carries_the_window_and_the_schema() {
+        let config = ProviderConfig::preset(ProviderKind::Ollama);
+        let long = "x".repeat(40_000);
+        let schema = serde_json::json!({"type": "object"});
+        let body = build_body(
+            &config,
+            &ChatRequest::new(vec![Message::user(long)]).with_schema(schema.clone()),
+        );
+        assert!(body["options"]["num_ctx"].as_u64().unwrap() > OLLAMA_DEFAULT_NUM_CTX as u64);
+        // Ollama takes the schema bare, not wrapped in a response_format.
+        assert_eq!(body["format"], schema);
+        assert_eq!(body["stream"], false);
+    }
+
+    #[test]
+    fn ollama_replies_are_read_from_its_own_shape() {
+        // Native responses have no `choices`; reading the OpenAI shape here
+        // would report every successful call as malformed.
+        let body = serde_json::json!({"message": {"content": "hello"}});
+        assert_eq!(extract_text(ProviderKind::Ollama, &body).unwrap(), "hello");
+    }
 
     #[test]
     fn every_preset_has_a_base_url_and_model() {
@@ -312,12 +434,14 @@ mod tests {
     #[test]
     fn chat_url_tolerates_a_trailing_slash() {
         // A user pasting a base URL with a trailing slash otherwise produces
-        // `//chat/completions` and a baffling 404.
-        let mut config = ProviderConfig::preset(ProviderKind::Ollama);
-        config.base_url = "http://localhost:11434/v1/".into();
+        // `//chat/completions` and a baffling 404. Checked on LM Studio, which
+        // is still on the OpenAI-compatible path — Ollama has its own test
+        // above, because it no longer uses that path at all.
+        let mut config = ProviderConfig::preset(ProviderKind::Lmstudio);
+        config.base_url = "http://localhost:1234/v1/".into();
         assert_eq!(
             config.chat_url(),
-            "http://localhost:11434/v1/chat/completions"
+            "http://localhost:1234/v1/chat/completions"
         );
     }
 
@@ -375,5 +499,57 @@ mod tests {
         // simply had nothing to say.
         let body = serde_json::json!({"choices": []});
         assert!(extract_text(ProviderKind::Openai, &body).is_err());
+    }
+}
+
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    /// The 42-minute meeting, end to end against a running Ollama.
+    ///
+    /// `cargo test --lib llm::provider::live -- --ignored --nocapture`
+    /// Needs Ollama up with the model pulled, and the transcript path in
+    /// `OATMEAL_LIVE_TRANSCRIPT`.
+    #[tokio::test]
+    #[ignore = "needs a running Ollama"]
+    async fn a_long_meeting_is_not_silently_truncated() {
+        let Ok(path) = std::env::var("OATMEAL_LIVE_TRANSCRIPT") else {
+            eprintln!("set OATMEAL_LIVE_TRANSCRIPT");
+            return;
+        };
+        let text = std::fs::read_to_string(path).expect("transcript");
+        // A passphrase at the very front. If the window is too small Ollama
+        // keeps the tail, so this is the first thing to disappear.
+        let prompt = format!(
+            "The passphrase is ZEBRAFISH-11.\n\n{text}\n\nReply with JSON \
+             {{\"passphrase\":\"...\"}} giving the passphrase stated above."
+        );
+        let mut config = ProviderConfig::preset(ProviderKind::Ollama);
+        config.model = std::env::var("OATMEAL_PROVIDER_MODEL").unwrap_or("gemma4:e2b".into());
+
+        let request = ChatRequest::new(vec![Message::user(prompt)]);
+        let body = build_body(&config, &request);
+        let window = body["options"]["num_ctx"].as_u64().unwrap();
+        assert!(
+            window > OLLAMA_DEFAULT_NUM_CTX as u64,
+            "window {window} too small"
+        );
+
+        let response: serde_json::Value = reqwest::Client::new()
+            .post(config.chat_url())
+            .json(&body)
+            .send()
+            .await
+            .expect("ollama unreachable")
+            .json()
+            .await
+            .expect("json");
+        let text = extract_text(ProviderKind::Ollama, &response).expect("content");
+        eprintln!("window={window} reply={text}");
+        assert!(
+            text.contains("ZEBRAFISH-11"),
+            "the front of the prompt was dropped: {text}"
+        );
     }
 }
