@@ -1,0 +1,10 @@
+{
+  "version": "0.1.0",
+  "pub_date": "2026-08-10T09:17:57Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSNVRWZVY0Rzl4cHhGZWlFS2swdnY3UlkybElQT05OQ1lQSGx5NUdEQkxUeUp5MEkvcVV6RWdCcFdwTUk4dDJ2Y0dKbENFZVhkZ3Fyclk5UWpwTHdQd1J1bXlKSXYrOWdNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MzUzNDc3CWZpbGU6T2F0bWVhbC5hcHAudGFyLmd6CktrcUQ4UmFzR0ptbWN2V2dEck1QYWNFVHYra3Q2UC92d1ZGc0syZEhUaHFPL2FuWXNLSXcrbS9MYWVvb2xac2hDUXFFWUlua0luSmNhR0F1NXpnZ0F3PT0K",
+      "url": "https://github.com/c-wenlong/oatmeal/releases/download/v0.1.0/Oatmeal.app.tar.gz"
+    }
+  }
+}
