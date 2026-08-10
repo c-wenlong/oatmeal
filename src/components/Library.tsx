@@ -7,7 +7,7 @@ import type { MeetingSummary } from "../types";
  *
  * This is the screen the app has never had. Until now the only way to reach a
  * meeting was search — which requires already knowing what was said in it, and
- * so is useless for "the call with Antonio, some time last month".
+ * so is useless for "that vendor call, some time last month".
  *
  * Deliberately not a card. Per docs/ui-teardown.md the home is a quiet list on
  * the background: date headers, a title, a time, and nothing else until you
