@@ -10,6 +10,37 @@
   --warn: #a8791b;
   --err: #b03a30;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* Display face. Granola sets its titles in a serif and the rest in sans; the
+     contrast is what makes a meeting read as a document rather than a record. */
+  --serif: "Iowan Old Style", Georgia, "Times New Roman", serif;
+
+  /* One type scale, so sizes are chosen from a set rather than invented per
+     component. Ratio is roughly 1.2 either side of the 15px body. */
+  --t-display: 2.25rem;
+  --t-title: 1.75rem;
+  --t-lead: 1.0625rem;
+  --t-body: 0.9375rem;
+  --t-small: 0.8125rem;
+  --t-micro: 0.6875rem;
+
+  /* And one spacing scale. */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2.25rem;
+  --s-7: 3.5rem;
+
+  /* The reading column. Shared by the library, the document and settings so
+     they line up when you move between them — three different widths is what
+     makes an app feel assembled rather than designed. */
+  --measure: 46rem;
+
+  /* Hierarchy is carried by opacity rather than size, per the teardown: a
+     second-level bullet is the same type, quieter. */
+  --dim-1: 0.72;
+  --dim-2: 0.55;
 
   font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
   font-synthesis: none;
@@ -1070,7 +1101,7 @@ input:focus {
    stack of cards. No borders, no fills, nothing until hover. */
 
 .library {
-  max-width: 46rem;
+  max-width: var(--measure);
   margin: 0 auto;
   padding: 2rem 1.5rem 6rem;
 }
@@ -1080,7 +1111,7 @@ input:focus {
 }
 
 .library-day-label {
-  font-size: 0.8125rem;
+  font-size: var(--t-small);
   font-weight: 500;
   color: var(--muted);
   margin: 0 0 0.5rem 0.75rem;
@@ -1110,7 +1141,7 @@ input:focus {
 }
 
 .library-row-title {
-  font-size: 0.9375rem;
+  font-size: var(--t-body);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1148,7 +1179,7 @@ input:focus {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  max-width: 46rem;
+  max-width: var(--measure);
   margin: 0 auto;
   padding: 2rem 2.25rem 0;
 }
@@ -1156,8 +1187,8 @@ input:focus {
 .library-title {
   /* Serif, per the teardown: the title should read as a document heading
      rather than a toolbar label. G36 formalises the type scale. */
-  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
-  font-size: 1.75rem;
+  font-family: var(--serif);
+  font-size: var(--t-title);
   font-weight: 400;
   margin: 0;
 }
@@ -1168,7 +1199,7 @@ input:focus {
    canvas. No cards, no borders. */
 
 .document {
-  max-width: 46rem;
+  max-width: var(--measure);
   margin: 0 auto;
   padding: 1.5rem 2.25rem 8rem;
 }
@@ -1188,8 +1219,8 @@ input:focus {
 }
 
 .document-title {
-  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
-  font-size: 2.25rem;
+  font-family: var(--serif);
+  font-size: var(--t-display);
   font-weight: 400;
   line-height: 1.15;
   margin: 1rem 0 0;
@@ -1215,7 +1246,7 @@ input:focus {
 }
 
 .document-pill {
-  font-size: 0.8125rem;
+  font-size: var(--t-small);
   color: var(--muted);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -1332,7 +1363,7 @@ input:focus {
 }
 
 .settings {
-  max-width: 46rem;
+  max-width: var(--measure);
   margin: 0 auto;
   padding: 1.5rem 2.25rem 8rem;
 }
@@ -1342,7 +1373,7 @@ input:focus {
 }
 
 .settings-section {
-  font-size: 0.8125rem;
+  font-size: var(--t-small);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1413,7 +1444,7 @@ input:focus {
   align-items: center;
   gap: 0.4rem;
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: var(--t-small);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -1566,7 +1597,7 @@ input:focus {
 
 .moment-text {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: var(--t-body);
   line-height: 1.45;
 }
 
@@ -1609,7 +1640,7 @@ input:focus {
   min-width: 18rem;
   text-align: left;
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--t-body);
   color: var(--muted);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -1642,7 +1673,7 @@ input:focus {
   left: 50%;
   bottom: 5.5rem;
   transform: translateX(-50%);
-  width: min(46rem, calc(100vw - 3rem));
+  width: min(var(--measure), calc(100vw - 3rem));
   max-height: 60vh;
   overflow: auto;
   border: 1px solid var(--border);
@@ -1725,4 +1756,46 @@ input:focus {
 .newnote:disabled {
   color: var(--muted);
   cursor: default;
+}
+
+/* ------------------------------------------------------------ reading type
+   The document is for reading, so it gets the measure and the leading rather
+   than the density the harness cards were tuned for. */
+
+.document-canvas .ProseMirror {
+  font-size: var(--t-lead);
+  line-height: 1.6;
+}
+
+.document-canvas .ProseMirror p {
+  margin: 0 0 var(--s-4);
+}
+
+/* Hierarchy by opacity, not size — the teardown's observation about Granola's
+   two bullet levels. A nested bullet is the same type, quieter. */
+.document .panel-section ul ul,
+.document-canvas .ProseMirror ul ul {
+  opacity: var(--dim-1);
+}
+
+.document .panel-section ul ul ul,
+.document-canvas .ProseMirror ul ul ul {
+  opacity: var(--dim-2);
+}
+
+.document .panel-section h3 {
+  font-size: var(--t-body);
+  font-weight: 600;
+  margin: var(--s-6) 0 var(--s-2);
+}
+
+/* Section headings carry a quiet gutter mark, the way Granola marks its
+   headings with a `#`. Decorative only, so it is hidden from the reader that
+   cannot see it. */
+.document .panel-section h3::before {
+  content: "#";
+  color: var(--muted);
+  opacity: 0.5;
+  margin-left: -1.1rem;
+  padding-right: 0.45rem;
 }

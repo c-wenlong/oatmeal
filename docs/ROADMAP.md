@@ -871,6 +871,16 @@ column with generous margins, consistent spacing scale.
 **Done when:** the app reads as one designed surface rather than a stack of components.
 **Do this last** — it is the step most tempting to do first and the most wasteful to
 redo.
+**Status:** ✅ Structure done; **the done-when is visual and only a person can call it.**
+What exists: one type scale and one spacing scale as tokens rather than 71 invented
+font sizes; `--measure` shared by the library, the document, settings and the ask sheet,
+so they line up when you move between them; the serif stack as a token rather than
+pasted twice; opacity-based hierarchy for nested bullets; a `#` gutter mark on section
+headings; reading leading in the document canvas.
+
+**Light and dark were already right** and were left alone. The app follows
+`prefers-color-scheme`, which is what the iOS screens showed Granola doing — it owns no
+palette and follows the platform.
 
 ## Sequencing at a glance
 
