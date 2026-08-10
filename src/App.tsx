@@ -3,6 +3,7 @@ import { RecordCard } from "./components/RecordCard";
 import { DetectionPopup } from "./components/DetectionPopup";
 import { Onboarding } from "./components/Onboarding";
 import { Library } from "./components/Library";
+import { NewMeetingButton } from "./components/NewMeetingButton";
 import { MeetingDocument } from "./components/MeetingDocument";
 import { AskBar } from "./components/AskBar";
 import { Settings } from "./components/Settings";
@@ -98,14 +99,22 @@ function MainWindow() {
       <main className="app">
         <header className="library-head">
           <h1 className="library-title">Meetings</h1>
-          <OverflowMenu
-            items={[
-              { label: "Settings", onSelect: () => setView({ screen: "settings" }) },
-              // The workbench survives here alone. It still holds the transcript
-              // and the sidecar log, and G35 is what finally gives those a home.
-              { label: "Workbench", onSelect: () => setView({ screen: "workbench" }) },
-            ]}
-          />
+          <div className="library-actions">
+            <NewMeetingButton
+              onCreated={(meetingId) => setView({ screen: "meeting", meetingId })}
+            />
+            <OverflowMenu
+              items={[
+                { label: "Settings", onSelect: () => setView({ screen: "settings" }) },
+                // The workbench survives here alone. It still holds the transcript
+                // and the sidecar log, and G35 is what finally gives those a home.
+                {
+                  label: "Workbench",
+                  onSelect: () => setView({ screen: "workbench" }),
+                },
+              ]}
+            />
+          </div>
         </header>
         <Onboarding />
         <Library onOpen={(meetingId) => setView({ screen: "meeting", meetingId })} />

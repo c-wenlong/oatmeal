@@ -258,6 +258,27 @@ fn finish_active_meeting(app: &tauri::AppHandle, event: &sidecar::SidecarEvent) 
 }
 
 /// Creates a meeting row and tells the sidecar to start recording into it.
+/// A meeting with nothing recorded in it yet.
+///
+/// Deliberately not `meeting_start`. That one transitions the lifecycle, tells
+/// the sidecar to capture, and fails outright when the sidecar is not running —
+/// all correct for pressing record, and all wrong for pressing `+`. Someone
+/// opening a note to type into is not starting a recording, and should not need
+/// a working microphone to do it.
+#[tauri::command]
+fn meeting_create(
+    state: tauri::State<'_, AppState>,
+    title: Option<String>,
+) -> Result<String, String> {
+    let started = now_ms();
+    let id = format!("m{started}");
+    let title = title.unwrap_or_else(|| "New note".to_string());
+
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::insert_empty_meeting(db.connection(), &id, &title, started).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
 #[tauri::command]
 fn meeting_start(app: tauri::AppHandle, title: Option<String>) -> Result<String, String> {
     let state = app.state::<AppState>();
@@ -2560,6 +2581,7 @@ pub fn run() {
             gcal_set_enabled,
             gcal_connect,
             gcal_disconnect,
+            meeting_create,
             meeting_index,
             meeting_links,
             link_params_get,

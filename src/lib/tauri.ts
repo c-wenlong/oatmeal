@@ -459,3 +459,12 @@ export function updateInstall(): Promise<void> {
 export function updateSkip(version: string): Promise<void> {
   return invoke<void>("update_skip", { version });
 }
+
+/**
+ * A meeting with nothing recorded in it — somewhere to type.
+ *
+ * Not `meetingStart`, which begins a capture and needs a running sidecar.
+ */
+export function meetingCreate(title?: string): Promise<string> {
+  return invoke<string>("meeting_create", { title });
+}

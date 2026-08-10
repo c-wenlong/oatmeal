@@ -851,6 +851,19 @@ stopped without dismissing a dialog first.
 transcript and the sidecar log inside `RecordCard`, plus the transcript→note direction
 of G35 that only exists there.
 
+### G38 · New meeting from the library
+**Depends on:** G30
+**Build:** `+ New note` in the library chrome, opening a document to type into.
+**Done when:** a meeting can be started without pressing record.
+**Status:** ✅ Done. Needed a new command rather than reusing `meeting_start`, which
+transitions the lifecycle, tells the sidecar to capture, and **fails outright when the
+sidecar is not running** — all correct for pressing record, all wrong for pressing `+`.
+Opening a page to type into should not require a working microphone.
+
+`insert_empty_meeting` also marks the row `complete` rather than the schema default
+`recording`: a note with no audio behind it would otherwise show as live in the library
+forever.
+
 ### G36 · Type and spacing
 **Depends on:** G30–G35
 **Build:** Serif display for titles, sans for body, opacity-based hierarchy, a centred

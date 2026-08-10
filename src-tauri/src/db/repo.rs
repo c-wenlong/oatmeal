@@ -10,6 +10,26 @@ use super::{DbError, Result, EMBEDDING_DIM};
 
 // ------------------------------------------------------------------- writes
 
+/// A meeting with no recording behind it — somewhere to type.
+///
+/// Distinct from `insert_meeting`, which marks the row `recording` because a
+/// capture is genuinely starting. A note created from the library has no audio
+/// and never will unless the user presses record, and a row claiming otherwise
+/// would show as live in the library forever.
+pub fn insert_empty_meeting(
+    conn: &Connection,
+    id: &str,
+    title: &str,
+    started_at: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO meetings (id, title, started_at, ended_at, status, trigger_source)
+         VALUES (?1, ?2, ?3, ?3, 'complete', 'manual')",
+        params![id, title, started_at],
+    )?;
+    Ok(())
+}
+
 pub fn insert_meeting(conn: &Connection, id: &str, title: &str, started_at: i64) -> Result<()> {
     conn.execute(
         "INSERT INTO meetings (id, title, started_at, status, trigger_source)
@@ -1908,6 +1928,40 @@ mod tests {
         // silently disabling detection for an app.
         let db = Database::open_in_memory().unwrap();
         assert!(set_detection_rule(db.connection(), "x", None, "maybe", 0).is_err());
+    }
+
+    #[test]
+    fn an_empty_meeting_is_not_recording() {
+        // A note created from the library has no audio and never will unless
+        // the user presses record. A row left at the default 'recording' shows
+        // as live in the library forever and confuses the lifecycle.
+        let db = Database::open_in_memory().unwrap();
+        insert_empty_meeting(db.connection(), "n1", "New note", 1_000).unwrap();
+
+        let meeting = list_meetings(db.connection(), 10).unwrap().remove(0);
+        assert_eq!(meeting.status, "complete");
+        assert_eq!(meeting.title.as_deref(), Some("New note"));
+    }
+
+    #[test]
+    fn an_empty_meeting_has_ended_so_it_reports_no_duration() {
+        // `ended_at` NULL means "still running" everywhere else in the app.
+        let db = Database::open_in_memory().unwrap();
+        insert_empty_meeting(db.connection(), "n1", "New note", 5_000).unwrap();
+
+        let meeting = list_meetings(db.connection(), 10).unwrap().remove(0);
+        assert_eq!(meeting.ended_at, Some(5_000));
+    }
+
+    #[test]
+    fn a_recorded_meeting_still_starts_as_recording() {
+        // The two must not converge: insert_meeting is used when capture is
+        // genuinely beginning.
+        let db = Database::open_in_memory().unwrap();
+        insert_meeting(db.connection(), "m1", "Real", 1_000).unwrap();
+
+        let meeting = list_meetings(db.connection(), 10).unwrap().remove(0);
+        assert_eq!(meeting.status, "recording");
     }
 
     #[test]

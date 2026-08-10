@@ -1700,3 +1700,29 @@ input:focus {
   padding: 0;
   margin: 0;
 }
+
+.library-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.newnote {
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+}
+
+.newnote:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.newnote:disabled {
+  color: var(--muted);
+  cursor: default;
+}
