@@ -60,24 +60,33 @@ export function Onboarding() {
     () => localStorage.getItem(DETECTION_SEEN_KEY) === "1",
   );
 
+  /**
+   * Asks four independent questions, independently.
+   *
+   * They used to share one `try`, chained on five awaits, with the meeting
+   * count last. One failure anywhere above it — an unreachable runtime, a
+   * provider that will not answer — skipped the count and left it at zero,
+   * and `loaded` was set in `finally` regardless. Zero meetings is exactly
+   * what makes the setup card appear, so a user with months of recordings
+   * got "Set up Oatmeal" because something unrelated was down.
+   *
+   * `allSettled`, so a failure answers only its own question.
+   */
   const refresh = useCallback(async () => {
-    try {
-      setPermissions(await permissionsSnapshot());
-    } catch {
-      /* the sidecar may not be up yet */
-    }
-    try {
-      setConfig(await providerCurrent());
-      const providers = await providersList();
-      const current = await providerCurrent();
-      setHasKey(providers.find((p) => p.kind === current.kind)?.hasKey ?? false);
-      setRuntime(await runtimeState());
-      setMeetings((await meetingsList()).length);
-    } catch {
-      /* first launch, before anything exists */
-    } finally {
-      setLoaded(true);
-    }
+    await Promise.allSettled([
+      (async () => setPermissions(await permissionsSnapshot()))(),
+      (async () => {
+        const [providers, current] = await Promise.all([
+          providersList(),
+          providerCurrent(),
+        ]);
+        setConfig(current);
+        setHasKey(providers.find((p) => p.kind === current.kind)?.hasKey ?? false);
+      })(),
+      (async () => setRuntime(await runtimeState()))(),
+      (async () => setMeetings((await meetingsList()).length))(),
+    ]);
+    setLoaded(true);
   }, []);
 
   useEffect(() => {

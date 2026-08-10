@@ -238,7 +238,20 @@ function handlers(): Record<string, (a?: Record<string, unknown>) => unknown> {
       screenRecording: "granted",
       needsRelaunch: false,
     }),
-    providers_list: () => [],
+    providers_list: () => [
+      {
+        kind: "bundled",
+        label: "Bundled (local)",
+        defaultBaseUrl: "http://127.0.0.1:8080",
+        defaultModel: "gemma",
+        requiresKey: false,
+        isLocal: true,
+        hasKey: false,
+      },
+    ],
+    runtime_state: () => ({ state: "ready" }),
+    runtime_model_status: () => [],
+    runtime_models: () => [],
     provider_current: () => ({
       id: "bundled",
       kind: "bundled",

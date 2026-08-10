@@ -92,4 +92,20 @@ describe("Onboarding", () => {
     await waitFor(() => expect(mockMeetings).toHaveBeenCalled());
     expect(screen.queryByText(/Set up Oatmeal/)).toBeNull();
   });
+
+  it("does not demand setup from someone with a library, when a probe fails", async () => {
+    // The four questions used to share one try block with the meeting count
+    // last. Anything failing above it skipped the count, left it at zero, and
+    // zero meetings is exactly what makes this card appear — so an unreachable
+    // runtime told a user of six months' standing to set the app up.
+    mockRuntime.mockRejectedValue(new Error("runtime unreachable"));
+    mockMeetings.mockResolvedValue([
+      { id: "m1", title: "Vendor call" },
+      { id: "m2", title: "Design review" },
+    ] as never);
+
+    render(<Onboarding />);
+    await waitFor(() => expect(mockMeetings).toHaveBeenCalled());
+    expect(screen.queryByText(/Set up Oatmeal/i)).toBeNull();
+  });
 });
