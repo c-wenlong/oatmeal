@@ -795,8 +795,8 @@ main view into a `…` menu and a settings surface.
 `RecordCard`, `SearchCard` and `ChatCard`. The last two are not machinery — they are
 G24 and G25, the whole point of having a corpus — and they are now stranded on a screen
 called "Workbench" reachable only through an overflow menu. The teardown's mapping table
-says chat should be a floating pill, but no numbered goal owns moving it. **G37 is
-needed**, or the workbench can never be deleted without losing features.
+says chat should be a floating pill, but no numbered goal owned moving it. **G37**
+was added for it and is now done — see below.
 
 **A second gap, found by looking at the running app:** there is no way to start a new
 meeting from the library. Granola has `+ New note` in its chrome and a compose button on
@@ -834,6 +834,22 @@ deserve different amounts of trust and only the reader can judge which landed.
 highlight its note needs a transcript on screen, and the document deliberately has none.
 That half lives on in the workbench, where `Notepad`'s `highlightedBlocks` still drives
 it. If a transcript view returns to the document, it comes back with it.
+
+### G37 · Search and chat get a home
+**Depends on:** G32, G33
+**Build:** `AskBar` — recording and asking in one bottom bar on every screen, the way
+Granola pairs them. `Ask anything` and a search button open the existing `ChatCard` and
+`SearchCard` in a sheet rather than rewriting them: their behaviour is tested and
+correct, and what was wrong was where they lived.
+**Done when:** neither is reachable only through the workbench.
+**Status:** ✅ Done. Ask is scoped to the meeting in view and to the whole corpus on the
+library — passing the wrong one would answer from the wrong evidence, so a test pins it.
+Recording stays reachable while the sheet is open, or a live recording could not be
+stopped without dismissing a dialog first.
+
+**The workbench is now `Onboarding` and `RecordCard`.** What holds it open is the
+transcript and the sidecar log inside `RecordCard`, plus the transcript→note direction
+of G35 that only exists there.
 
 ### G36 · Type and spacing
 **Depends on:** G30–G35

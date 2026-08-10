@@ -1584,3 +1584,119 @@ input:focus {
   align-items: center;
   justify-content: space-between;
 }
+
+/* ------------------------------------------------------------------ ask bar
+   Recording and asking, together at the bottom, on every screen. */
+
+.askbar {
+  position: fixed;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  z-index: 20;
+}
+
+/* The record control is part of the bar now, so it stops positioning itself. */
+.askbar .reccontrol {
+  position: static;
+  transform: none;
+}
+
+.askbar-ask {
+  min-width: 18rem;
+  text-align: left;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 18%);
+}
+
+.askbar-ask:hover {
+  color: var(--text);
+}
+
+.askbar-search {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  font-size: 1.1rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 18%);
+}
+
+.asksheet {
+  position: fixed;
+  left: 50%;
+  bottom: 5.5rem;
+  transform: translateX(-50%);
+  width: min(46rem, calc(100vw - 3rem));
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 32%);
+  z-index: 25;
+}
+
+.asksheet-head {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
+
+.asksheet-tab {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.asksheet-tab--on {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.asksheet-close {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.875rem;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+}
+
+.asksheet-body {
+  padding: 0.75rem;
+}
+
+/* Inside the sheet the surfaces are the sheet, not cards within it. */
+.asksheet-body .card {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+}

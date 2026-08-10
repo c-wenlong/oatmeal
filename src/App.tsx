@@ -1,12 +1,10 @@
 import { useState } from "react";
 import { RecordCard } from "./components/RecordCard";
 import { DetectionPopup } from "./components/DetectionPopup";
-import { SearchCard } from "./components/SearchCard";
-import { ChatCard } from "./components/ChatCard";
 import { Onboarding } from "./components/Onboarding";
 import { Library } from "./components/Library";
 import { MeetingDocument } from "./components/MeetingDocument";
-import { RecordControl } from "./components/RecordControl";
+import { AskBar } from "./components/AskBar";
 import { Settings } from "./components/Settings";
 import { OverflowMenu } from "./components/OverflowMenu";
 
@@ -80,11 +78,9 @@ function MainWindow() {
           meetingId={view.meetingId}
           onBack={() => setView({ screen: "library" })}
         />
-        {/* Fixed to the window, not the document: the one control that must
-            never be scrolled away from. Absent on the workbench, which still
-            has the old card until G33 takes it apart — two recording UIs on
-            one screen would be worse than either. */}
-        <RecordControl />
+        {/* Recording and asking, together and always present. Ask is scoped
+            to the meeting in view; on the library it asks the whole corpus. */}
+        <AskBar meetingId={view.meetingId} onReveal={reveal} />
       </main>
     );
   }
@@ -113,7 +109,7 @@ function MainWindow() {
         </header>
         <Onboarding />
         <Library onOpen={(meetingId) => setView({ screen: "meeting", meetingId })} />
-        <RecordControl />
+        <AskBar meetingId={null} onReveal={reveal} />
       </main>
     );
   }
@@ -135,8 +131,6 @@ function MainWindow() {
 
       <Onboarding />
       <RecordCard />
-      <SearchCard onReveal={reveal} />
-      <ChatCard onReveal={reveal} />
     </main>
   );
 }
