@@ -2039,3 +2039,47 @@ input:focus {
   gap: var(--s-5);
   margin-top: var(--s-3);
 }
+
+/* A row that opens somewhere else. */
+.settings-row--open {
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-row--open:hover {
+  background: var(--bg);
+}
+
+.settings-disclosure-title {
+  display: block;
+  font-size: var(--t-body);
+  font-weight: 500;
+}
+
+.settings-disclosure-sub {
+  display: block;
+  font-size: var(--t-small);
+  color: var(--muted);
+  margin-top: 0.1rem;
+}
+
+.settings-disclosure-value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-small);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.settings-chevron {
+  font-size: 1rem;
+  line-height: 1;
+}

@@ -64,6 +64,45 @@ export function SettingsGroup({
   );
 }
 
+/**
+ * A row that opens somewhere else.
+ *
+ * Granola's answer to a setting too big for a line: show the title, its current
+ * state, and a chevron, and put the detail on its own screen. Expanded inline,
+ * meeting detection is two toggles, a slider and a thirteen-app list — one row
+ * dwarfing every other row on the page.
+ */
+export function SettingsDisclosure({
+  icon,
+  title,
+  subtitle,
+  value,
+  onOpen,
+}: {
+  icon: IconName;
+  title: string;
+  subtitle: string;
+  /** The state, said in a word: what the row is worth reading at a glance. */
+  value: string;
+  onOpen: () => void;
+}) {
+  return (
+    <button className="settings-row settings-row--open" onClick={onOpen}>
+      <SettingsIcon name={icon} />
+      <span className="settings-row-body">
+        <span className="settings-disclosure-title">{title}</span>
+        <span className="settings-disclosure-sub">{subtitle}</span>
+      </span>
+      <span className="settings-disclosure-value">
+        {value}
+        <span className="settings-chevron" aria-hidden="true">
+          ›
+        </span>
+      </span>
+    </button>
+  );
+}
+
 export function SettingsRow({
   icon,
   children,
