@@ -19,22 +19,35 @@ import type { CalendarSource, DetectionSettings } from "../types";
  * placeholder for a feature that does not exist yet.
  *
  * The calendars come from EventKit via the sidecar, which is why they arrive
- * with the event window rather than on request. The Google OAuth path is not
- * represented here: it reads `primary` and nothing else, and its scope
- * (`calendar.events.readonly`) cannot ask for a calendar list at all.
+ * with the event window rather than on request.
+ *
+ * A connected Google account appears as one row rather than several. Its scope
+ * (`calendar.events.readonly`) cannot enumerate calendars, so there is nothing
+ * to expand it into — but leaving it out of a list headed "visible calendars"
+ * made the one source the user explicitly connected the one source they could
+ * not find.
  */
 
-/** What to say when the list is empty, which is not always the same thing. */
-export function emptyListNote(
-  calendarEnabled: boolean,
-  loaded: boolean,
-): string | null {
+/**
+ * What to say when the list is empty, which is never just "no calendars".
+ *
+ * Three different situations, and only the user can tell them apart — so the
+ * note names the one thing that is actually true rather than guessing. The
+ * last case matters most: this list is EventKit's, so someone whose calendars
+ * live only in Google will see it empty forever and has no way to know why
+ * unless it is said.
+ */
+export function emptyListNote(calendarEnabled: boolean, loaded: boolean): string {
   if (!calendarEnabled) {
     // The honest reason. "No calendars" would read as "you have none".
-    return "Calendar detection is off, so Oatmeal is not reading your calendars.";
+    return "Calendar detection is off, so Oatmeal is not reading your calendars. Turn it on under Detection.";
   }
   if (!loaded) return "Reading your calendars…";
-  return "No calendars yet. They appear once macOS grants access and the first read finishes.";
+  return (
+    "Nothing from the macOS Calendar app yet — either it has no calendars, or it has " +
+    "not granted Oatmeal access. A connected Google account is a separate source and " +
+    "appears here only once it is connected."
+  );
 }
 
 /** A calendar's dot. Falls back to the text colour rather than to nothing. */

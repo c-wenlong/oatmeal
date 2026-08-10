@@ -67,7 +67,13 @@ describe("emptyListNote", () => {
 
   it("distinguishes still-loading from genuinely none", () => {
     expect(emptyListNote(true, false)).toMatch(/Reading/i);
-    expect(emptyListNote(true, true)).toMatch(/No calendars yet/i);
+    expect(emptyListNote(true, true)).toMatch(/macOS Calendar app/i);
+  });
+
+  it("says a Google account is a separate source", () => {
+    // Someone whose calendars live only in Google will see this list empty
+    // forever, and has no way to know why unless it is said.
+    expect(emptyListNote(true, true)).toMatch(/Google account is a separate source/i);
   });
 });
 
@@ -151,9 +157,28 @@ describe("CalendarPane", () => {
     ).toBeChecked();
   });
 
+  it("lists a connected Google account alongside the local calendars", async () => {
+    // Its scope cannot enumerate calendars, so it is one row rather than
+    // several — but leaving it out made the one source the user explicitly
+    // connected the one source they could not find.
+    mockSources.mockResolvedValue([
+      source(),
+      source({ id: "google:primary", title: "Google Calendar", visible: false }),
+    ]);
+    render(<CalendarPane />);
+    expect(
+      await screen.findByRole("switch", { name: "Google Calendar" }),
+    ).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Google Calendar" }));
+    await waitFor(() =>
+      expect(mockSetVisible).toHaveBeenCalledWith("google:primary", true),
+    );
+  });
+
   it("explains an empty list instead of showing nothing", async () => {
     mockSources.mockResolvedValue([]);
     render(<CalendarPane />);
-    expect(await screen.findByText(/No calendars yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/macOS Calendar app/i)).toBeInTheDocument();
   });
 });

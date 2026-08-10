@@ -21,6 +21,14 @@ pub mod loopback;
 pub mod pkce;
 pub mod token;
 
+/// The id the visible-calendars list uses for the Google account.
+///
+/// Reserved rather than derived: Google's `calendar.events.readonly` scope
+/// cannot enumerate calendars, so there is no real id to use. This stands for
+/// "the primary calendar of the connected account", which is the only thing
+/// this path reads.
+pub const SOURCE_ID: &str = "google:primary";
+
 pub use connection::Connection;
 pub use pkce::Pkce;
 pub use token::{TokenError, Tokens};

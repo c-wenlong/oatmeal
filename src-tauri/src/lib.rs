@@ -1217,6 +1217,18 @@ fn calendar_set_visible(
     visible: bool,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+
+    // The Google row is not an EventKit calendar, so hiding it is not a matter
+    // of the hidden set — it is the same switch the account card owns.
+    if calendar_id == gcal::SOURCE_ID {
+        return repo::set_setting(
+            db.connection(),
+            SETTING_GCAL_ENABLED,
+            if visible { "1" } else { "0" },
+        )
+        .map_err(|e| e.to_string());
+    }
+
     let mut hidden = hidden_calendars(db.connection());
     if visible {
         hidden.remove(&calendar_id);

@@ -4,7 +4,6 @@ import {
   gcalDisconnect,
   gcalSetClientId,
   gcalSetClientSecret,
-  gcalSetEnabled,
   gcalSettings,
 } from "../lib/tauri";
 import type { GcalSettings } from "../types";
@@ -223,17 +222,9 @@ export function GoogleCalendarCard() {
         {!ready && <span className="empty-note">{missingHalf(settings)}</span>}
       </div>
 
-      {settings.connected && (
-        <label className="tuner-row">
-          <span>Use these events for meeting detection</span>
-          <input
-            type="checkbox"
-            aria-label="use google calendar for detection"
-            checked={settings.enabled}
-            onChange={(e) => void gcalSetEnabled(e.target.checked).then(refresh)}
-          />
-        </label>
-      )}
+      {/* The "use these events" switch lives in Visible calendars now, with the
+          other calendars. Two controls for one setting is how a user learns not
+          to trust either of them. */}
 
       {message && <p className="empty-note">{message}</p>}
     </section>

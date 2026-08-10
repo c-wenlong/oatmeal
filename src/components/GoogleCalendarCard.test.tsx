@@ -227,12 +227,15 @@ describe("GoogleCalendarCard", () => {
     expect(screen.queryByLabelText(/use google calendar for detection/i)).toBeNull();
   });
 
-  it("can turn the source on once connected", async () => {
+  it("does not own the use-for-detection switch", async () => {
+    // It lives in Visible calendars now, with the other calendars. Two
+    // controls for one setting is how a user learns to trust neither — and
+    // this card is behind a disclosure most people never open.
     mockGet.mockResolvedValue(settings({ connected: true }));
     render(<GoogleCalendarCard />);
 
-    fireEvent.click(await screen.findByLabelText(/use google calendar for detection/i));
-    await waitFor(() => expect(mockSetEnabled).toHaveBeenCalledWith(true));
+    await screen.findByRole("button", { name: /disconnect/i });
+    expect(screen.queryByLabelText(/use google calendar for detection/i)).toBeNull();
   });
 
   it("disconnects and says the token was deleted", async () => {
