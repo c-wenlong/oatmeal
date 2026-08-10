@@ -4,7 +4,7 @@
 //! is exercisable from an ordinary integration test against the real binary.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -79,9 +79,11 @@ fn candidate_paths() -> Vec<PathBuf> {
 
     // `tauri dev` runs from target/debug and does not stage externalBin, so fall
     // back to where `pnpm sidecar:build` puts it.
+    // Fully qualified rather than imported: `Path` is used only here, so a
+    // top-level import is unused in a release build and warns on every one.
     #[cfg(debug_assertions)]
     candidates.push(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("binaries")
             .join(format!("{SIDECAR_NAME}-{}", target_triple())),
     );

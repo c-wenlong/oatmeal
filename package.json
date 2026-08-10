@@ -20,7 +20,7 @@
     "sidecar:test": "cd sidecar && swift test",
     "sidecar:coverage": "bash scripts/swift-coverage.sh",
     "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm verify:rust",
-    "verify:rust": "cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --lib"
+    "verify:rust": "cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo clippy --release -- -D warnings && cargo test --lib"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
