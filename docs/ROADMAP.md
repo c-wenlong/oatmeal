@@ -798,6 +798,13 @@ called "Workbench" reachable only through an overflow menu. The teardown's mappi
 says chat should be a floating pill, but no numbered goal owns moving it. **G37 is
 needed**, or the workbench can never be deleted without losing features.
 
+**A second gap, found by looking at the running app:** there is no way to start a new
+meeting from the library. Granola has `+ New note` in its chrome and a compose button on
+iOS; the teardown's mapping table records that and no goal owned building it. The only
+way to begin today is the record pill, which starts *recording* rather than opening a
+document to type into — not the same thing, and not what someone reaching for a `+`
+wants. **G38.**
+
 Link tuning also stayed with the meeting rather than moving here: it is scoped to one
 meeting's links, so global settings is the wrong home. It belongs behind the document's
 own `…`, which G34 introduces.

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  meetingDelete,
   meetingLinks,
   meetingRename,
   meetingTranscript,
@@ -8,7 +9,9 @@ import {
 import type { MeetingSummary, StoredLink, Utterance } from "../types";
 import { meetingTitle } from "./Library";
 import { Notepad } from "./Notepad";
+import { LinkTuner } from "./LinkTuner";
 import { LinkedMoment } from "./LinkedMoment";
+import { OverflowMenu } from "./OverflowMenu";
 import { PanelView } from "./PanelView";
 
 /**
@@ -90,6 +93,7 @@ export function MeetingDocument({
   const [links, setLinks] = useState<StoredLink[]>([]);
   const [utterances, setUtterances] = useState<Utterance[]>([]);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [tuning, setTuning] = useState(false);
   const titleRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
@@ -137,9 +141,29 @@ export function MeetingDocument({
 
   return (
     <article className="document" data-testid="meeting-document">
-      <button className="document-back" onClick={onBack}>
-        ‹ Meetings
-      </button>
+      <div className="document-head">
+        <button className="document-back" onClick={onBack}>
+          ‹ Meetings
+        </button>
+        {/* The document's own menu. Link tuning belongs here rather than in
+            global settings — it is scoped to this meeting's links — and so
+            does deleting the meeting you are looking at. */}
+        <OverflowMenu
+          label="meeting actions"
+          items={[
+            {
+              label: tuning ? "Hide link tuning" : "Tune linking",
+              onSelect: () => setTuning((was) => !was),
+            },
+            {
+              label: "Delete this meeting",
+              onSelect: () => {
+                void meetingDelete(meetingId).then(onBack);
+              },
+            },
+          ]}
+        />
+      </div>
 
       {editingTitle ? (
         <input
@@ -183,6 +207,15 @@ export function MeetingDocument({
           onHoverBlock={setHovered}
         />
       </div>
+
+      {tuning && (
+        <LinkTuner
+          meetingId={meetingId}
+          links={links}
+          utterances={utterances}
+          onRelinked={() => void meetingLinks(meetingId).then(setLinks)}
+        />
+      )}
 
       <LinkedMoment blockId={hovered} links={links} utterances={utterances} />
     </article>

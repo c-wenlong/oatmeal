@@ -1525,9 +1525,12 @@ input:focus {
 
 .moment {
   position: fixed;
-  left: 1.5rem;
-  bottom: 1.5rem;
-  max-width: 22rem;
+  /* Right margin, not bottom-left. The document is a centred column, so this
+     space is empty by construction — where bottom-left sat on top of the notes
+     being read and collided with the record pill in the centre. */
+  right: 1.5rem;
+  bottom: 5.5rem;
+  max-width: 20rem;
   padding: 0.7rem 0.85rem;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1565,4 +1568,19 @@ input:focus {
   margin: 0;
   font-size: 0.875rem;
   line-height: 1.45;
+}
+
+/* The summary is part of the page, not a panel on it. The card treatment is
+   right on the workbench, where it sits among other cards, and wrong here. */
+.document .panel-view {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0 0 2rem;
+}
+
+.document-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }

@@ -545,3 +545,58 @@ mod tests {
         assert!(second.is_empty(), "backfill re-did work already done");
     }
 }
+
+#[cfg(test)]
+mod seed_tools {
+    //! A one-off tool, not a test.
+    //!
+    //! Indexes meetings in a real database so the hover reveal (G35) can be
+    //! judged against real language. It lives here because `index_meeting` is
+    //! the thing being run and this is the crate that owns it.
+    //!
+    //! ```text
+    //! OATMEAL_DB=~/Library/Application\ Support/com.kaichen.oatmeal/oatmeal.sqlite \
+    //!   cargo test --lib seed_tools::index_seeded -- --ignored --nocapture
+    //! ```
+    use super::*;
+    use crate::db::Database;
+    use crate::embed::HttpEmbedder;
+
+    #[tokio::test]
+    #[ignore]
+    async fn index_seeded() {
+        let path = std::env::var("OATMEAL_DB").expect("set OATMEAL_DB");
+        let mut db = Database::open(path.as_str()).expect("open database");
+        let embedder = HttpEmbedder::local();
+        let params = LinkParams::default();
+
+        let ids: Vec<String> = {
+            let conn = db.connection();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id FROM meetings WHERE title LIKE '%[seeded]%' ORDER BY started_at",
+                )
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect();
+            rows
+        };
+        assert!(!ids.is_empty(), "nothing seeded to index");
+
+        for id in ids {
+            let started = std::time::Instant::now();
+            let report = index_meeting(db.connection_mut(), &id, &embedder, &params)
+                .await
+                .expect("index");
+            eprintln!(
+                "{id}: {} embedded, {} links, {:.1}s",
+                report.embedded,
+                report.links,
+                started.elapsed().as_secs_f32()
+            );
+        }
+    }
+}

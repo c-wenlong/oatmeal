@@ -20,11 +20,13 @@ vi.mock("../lib/tauri", () => ({
   meetingRename: vi.fn(),
   meetingLinks: vi.fn(),
   meetingTranscript: vi.fn(),
+  meetingDelete: vi.fn(),
 }));
 // The document composes the real editor and panel view; both reach for Tauri
 // and a ProseMirror DOM, neither of which this test is about.
 vi.mock("./Notepad", () => ({ Notepad: () => <div data-testid="notepad" /> }));
 vi.mock("./PanelView", () => ({ PanelView: () => <div data-testid="panels" /> }));
+vi.mock("./LinkTuner", () => ({ LinkTuner: () => <div data-testid="link-tuner" /> }));
 
 const mockList = vi.mocked(meetingsList);
 const mockRename = vi.mocked(meetingRename);
@@ -218,6 +220,18 @@ describe("MeetingDocument", () => {
     expect(
       await screen.findByRole("heading", { name: "Vendor call" }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps link tuning behind the menu, not on the page", async () => {
+    // G18's tuner is an instrument, not part of the document. It is scoped to
+    // this meeting's links, which is why it lives here rather than in Settings.
+    render(<MeetingDocument meetingId="m1" onBack={() => {}} />);
+    await screen.findByTestId("meeting-document");
+    expect(screen.queryByTestId("link-tuner")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("meeting actions"));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Tune linking/ }));
+    expect(screen.getByTestId("link-tuner")).toBeInTheDocument();
   });
 
   it("says so when the meeting is gone rather than hanging on Loading", async () => {
