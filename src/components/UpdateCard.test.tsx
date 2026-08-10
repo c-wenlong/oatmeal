@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { UpdateCard, isWorthReporting, summarise } from "./UpdateCard";
+import { UpdateCard, describeFailure, isWorthReporting, summarise } from "./UpdateCard";
 import { updateCheck, updateInstall, updateSkip } from "../lib/tauri";
 import type { UpdateStatus } from "../types";
 
@@ -61,6 +61,31 @@ describe("isWorthReporting", () => {
     // security fix needed shipping.
     expect(isWorthReporting("the updater is not configured: missing pubkey")).toBe(
       true,
+    );
+  });
+});
+
+describe("describeFailure", () => {
+  it("explains a missing manifest instead of quoting the updater", () => {
+    // What the user sees today, with no releases published: technically true,
+    // and impossible to act on.
+    const said = describeFailure(
+      "Could not fetch a valid release JSON from the remote",
+    );
+    expect(said).toMatch(/nothing has been published/);
+  });
+
+  it("names both possibilities rather than guessing", () => {
+    // A malformed manifest produces the same error as an absent one, so the
+    // message must not claim to know which.
+    expect(describeFailure("could not fetch a valid release JSON")).toMatch(
+      /malformed/,
+    );
+  });
+
+  it("keeps the original wording for anything it does not recognise", () => {
+    expect(describeFailure("error sending request for url")).toBe(
+      "error sending request for url",
     );
   });
 });

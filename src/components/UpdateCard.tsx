@@ -15,6 +15,24 @@ export function summarise(status: UpdateStatus): string {
 }
 
 /**
+ * A failure in the user's terms.
+ *
+ * The updater's own wording — "Could not fetch a valid release JSON from the
+ * remote" — is accurate and tells you nothing you can act on. On a project with
+ * no releases yet it means precisely one thing, and even where it does not, the
+ * two possibilities are worth naming.
+ */
+export function describeFailure(error: string): string {
+  if (/release json|manifest/i.test(error)) {
+    return "No release manifest at that address — either nothing has been published yet, or the manifest is malformed.";
+  }
+  if (/not configured|pubkey|public key/i.test(error)) {
+    return `Updates are not configured, so none can be installed. ${error}`;
+  }
+  return error;
+}
+
+/**
  * Whether a failed check is worth showing the user.
  *
  * A laptop on a train fails this check every time, and an update check is
@@ -53,7 +71,7 @@ export function UpdateCard() {
       const text = String(err);
       // On an explicit click, say what happened either way — silence after a
       // button press reads as a broken button.
-      setMessage(announce || isWorthReporting(text) ? text : null);
+      setMessage(announce || isWorthReporting(text) ? describeFailure(text) : null);
     } finally {
       setBusy(false);
     }
