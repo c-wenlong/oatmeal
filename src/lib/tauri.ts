@@ -39,6 +39,7 @@ import type {
   GcalSettings,
   FlowOutcome,
   UpdateStatus,
+  CalendarSource,
 } from "../types";
 import type { PermissionsSnapshot } from "./permissions";
 
@@ -441,6 +442,30 @@ export function gcalSetClientId(clientId: string): Promise<void> {
  */
 export function gcalSetClientSecret(clientSecret: string): Promise<void> {
   return invoke<void>("gcal_set_client_secret", { clientSecret });
+}
+
+/** Every calendar EventKit reports, with the user's on/off choice applied. */
+export function calendarSources(): Promise<CalendarSource[]> {
+  return invoke<CalendarSource[]>("calendar_sources");
+}
+
+export function calendarSetVisible(
+  calendarId: string,
+  visible: boolean,
+): Promise<void> {
+  return invoke<void>("calendar_set_visible", { calendarId, visible });
+}
+
+export function calendarResetVisibility(): Promise<void> {
+  return invoke<void>("calendar_reset_visibility");
+}
+
+/** One of the two Display switches. The key is validated in Rust. */
+export function calendarSetDisplay(
+  key: "includeSoloEvents" | "showUpcomingInMenuBar",
+  enabled: boolean,
+): Promise<void> {
+  return invoke<void>("calendar_set_display", { key, enabled });
 }
 
 export function gcalSetEnabled(enabled: boolean): Promise<void> {

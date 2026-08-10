@@ -137,6 +137,9 @@ fn to_calendar_event(event: GoogleEvent) -> Option<CalendarEvent> {
         // into the description. Both are handed to the existing extractor.
         url: event.hangout_link,
         notes: event.description,
+        // The Google path reads `primary` and nothing else — there is no list
+        // of calendars to hide from, because the scope cannot ask for one.
+        calendar_id: None,
         attendee_count: event
             .attendees
             .iter()

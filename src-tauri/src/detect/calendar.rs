@@ -24,6 +24,66 @@ pub struct CalendarEvent {
     pub notes: Option<String>,
     #[serde(default)]
     pub attendee_count: i64,
+    /// Which calendar it came from. Optional: an event with no calendar is not
+    /// worth discarding, and the Google path has only one calendar anyway.
+    #[serde(default)]
+    pub calendar_id: Option<String>,
+}
+
+/// A calendar the account holds.
+///
+/// Carries its colour because the list is unreadable without it — two accounts
+/// both with a "Work" calendar are told apart by the dot, exactly as they are
+/// in Calendar.app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarSource {
+    pub id: String,
+    pub title: String,
+    /// `#rrggbb`, or absent when EventKit has no colour for it.
+    #[serde(default)]
+    pub color: Option<String>,
+    /// Whether its events are considered. Decided here, not by the sidecar.
+    #[serde(default = "yes")]
+    pub visible: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Drops events from calendars the user has hidden.
+///
+/// Hiding is stored as the set of *hidden* ids rather than visible ones, so a
+/// calendar added after the choice was made shows up by default. The other way
+/// round, every new calendar would arrive silently switched off.
+pub fn visible<'a>(
+    events: &'a [CalendarEvent],
+    hidden: &std::collections::HashSet<String>,
+) -> Vec<&'a CalendarEvent> {
+    events
+        .iter()
+        .filter(|event| match &event.calendar_id {
+            Some(id) => !hidden.contains(id),
+            // No calendar means nothing to hide it by. Dropping it would make
+            // the Google path — which reports no calendar id — vanish entirely.
+            None => true,
+        })
+        .collect()
+}
+
+/// The calendar list, with the user's choices applied.
+pub fn with_visibility(
+    sources: &[CalendarSource],
+    hidden: &std::collections::HashSet<String>,
+) -> Vec<CalendarSource> {
+    sources
+        .iter()
+        .map(|source| CalendarSource {
+            visible: !hidden.contains(&source.id),
+            ..source.clone()
+        })
+        .collect()
 }
 
 /// Hosts whose links mean "this is a call".
@@ -101,15 +161,20 @@ pub fn offer_at(event: &CalendarEvent, lead_ms: i64) -> i64 {
 /// `already_offered` keeps a poll every five minutes from raising the same
 /// meeting repeatedly — the queue would merge them, but re-offering something
 /// the user has already dismissed is worse than merging.
+/// `include_solo` relaxes the meeting-shape rule to let through an entry with
+/// no link, no location and nobody else on it. Off by default, and it should
+/// stay off for most people: those entries are focus time, and offering to
+/// record them is what teaches a user to dismiss the popup on sight.
 pub fn due<'a>(
     events: &'a [CalendarEvent],
     now_ms: i64,
     lead_ms: i64,
     already_offered: &[String],
+    include_solo: bool,
 ) -> Vec<&'a CalendarEvent> {
     events
         .iter()
-        .filter(|event| is_meeting_shaped(event))
+        .filter(|event| include_solo || is_meeting_shaped(event))
         .filter(|event| !already_offered.iter().any(|id| id == &event.id))
         // Within the lead window, and not already long finished. An event whose
         // end time has passed is history, however recently it appeared.
@@ -132,7 +197,95 @@ mod tests {
             url: None,
             notes: None,
             attendee_count: 0,
+            calendar_id: None,
         }
+    }
+
+    fn source(id: &str) -> CalendarSource {
+        CalendarSource {
+            id: id.into(),
+            title: id.into(),
+            color: None,
+            visible: true,
+        }
+    }
+
+    fn hidden(ids: &[&str]) -> std::collections::HashSet<String> {
+        ids.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn a_hidden_calendar_contributes_nothing() {
+        let mut work = event("a");
+        work.calendar_id = Some("work".into());
+        let mut personal = event("b");
+        personal.calendar_id = Some("personal".into());
+
+        let events = [work, personal];
+        let kept = visible(&events, &hidden(&["personal"]));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, "a");
+    }
+
+    #[test]
+    fn an_event_with_no_calendar_survives() {
+        // The Google path reports no calendar id at all. Dropping those would
+        // make that whole source vanish the moment anything was hidden.
+        let orphan = [event("a")];
+        assert_eq!(visible(&orphan, &hidden(&["work"])).len(), 1);
+    }
+
+    #[test]
+    fn a_new_calendar_is_visible_without_being_chosen() {
+        // Hidden ids are stored rather than visible ones precisely for this: a
+        // calendar added after the choice would otherwise arrive switched off,
+        // silently, and the user would never know it existed.
+        let list = with_visibility(&[source("added-today")], &hidden(&["work"]));
+        assert!(list[0].visible);
+    }
+
+    #[test]
+    fn the_list_reports_what_the_user_switched_off() {
+        let list = with_visibility(&[source("work"), source("personal")], &hidden(&["work"]));
+        assert!(!list[0].visible);
+        assert!(list[1].visible);
+    }
+
+    #[test]
+    fn a_solo_hold_is_offered_only_when_asked_for() {
+        // The default has to stay conservative: offering to record focus time
+        // is what teaches someone to dismiss the popup without reading it.
+        let e = event("a");
+        assert!(!is_meeting_shaped(&e));
+        let at = e.starts_at;
+        assert!(due(std::slice::from_ref(&e), at, 90_000, &[], false).is_empty());
+        assert_eq!(
+            due(std::slice::from_ref(&e), at, 90_000, &[], true).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn including_solo_events_does_not_disable_the_other_filters() {
+        // It relaxes meeting-shape and nothing else — an event already finished
+        // is still history, and one already offered is still not re-offered.
+        let e = event("a");
+        assert!(due(
+            std::slice::from_ref(&e),
+            e.ends_at.unwrap() + 1,
+            90_000,
+            &[],
+            true
+        )
+        .is_empty());
+        assert!(due(
+            std::slice::from_ref(&e),
+            e.starts_at,
+            90_000,
+            &["a".to_string()],
+            true
+        )
+        .is_empty());
     }
 
     #[test]
@@ -211,9 +364,16 @@ mod tests {
     fn an_event_is_offered_once_the_lead_time_is_reached() {
         let e = event("a");
         let lead = 90_000;
-        assert!(due(std::slice::from_ref(&e), e.starts_at - lead - 1, lead, &[]).is_empty());
+        assert!(due(
+            std::slice::from_ref(&e),
+            e.starts_at - lead - 1,
+            lead,
+            &[],
+            false
+        )
+        .is_empty());
         assert_eq!(
-            due(&[meeting()], meeting().starts_at - lead, lead, &[]).len(),
+            due(&[meeting()], meeting().starts_at - lead, lead, &[], false).len(),
             1
         );
     }
@@ -230,7 +390,14 @@ mod tests {
         // meeting would be raised repeatedly after being dismissed.
         let e = meeting();
         let offered = vec!["m".to_string()];
-        assert!(due(std::slice::from_ref(&e), e.starts_at, 90_000, &offered).is_empty());
+        assert!(due(
+            std::slice::from_ref(&e),
+            e.starts_at,
+            90_000,
+            &offered,
+            false
+        )
+        .is_empty());
     }
 
     #[test]
@@ -240,7 +407,8 @@ mod tests {
             std::slice::from_ref(&e),
             e.ends_at.unwrap() + 1,
             90_000,
-            &[]
+            &[],
+            false
         )
         .is_empty());
     }
@@ -250,7 +418,14 @@ mod tests {
         // Joining twenty minutes late is normal.
         let e = meeting();
         assert_eq!(
-            due(std::slice::from_ref(&e), e.starts_at + 1_000, 90_000, &[]).len(),
+            due(
+                std::slice::from_ref(&e),
+                e.starts_at + 1_000,
+                90_000,
+                &[],
+                false
+            )
+            .len(),
             1
         );
     }
@@ -260,7 +435,7 @@ mod tests {
         let mut e = meeting();
         e.ends_at = None;
         assert_eq!(
-            due(std::slice::from_ref(&e), e.starts_at, 90_000, &[]).len(),
+            due(std::slice::from_ref(&e), e.starts_at, 90_000, &[], false).len(),
             1
         );
     }
@@ -270,7 +445,7 @@ mod tests {
         let mut lunch = event("lunch");
         lunch.title = Some("Lunch".into());
         let events = vec![lunch, meeting()];
-        let due_now = due(&events, meeting().starts_at, 90_000, &[]);
+        let due_now = due(&events, meeting().starts_at, 90_000, &[], false);
         assert_eq!(due_now.len(), 1);
         assert_eq!(due_now[0].id, "m");
     }

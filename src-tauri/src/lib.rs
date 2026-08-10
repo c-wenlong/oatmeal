@@ -14,7 +14,7 @@ pub mod sidecar;
 pub mod tray;
 pub mod update;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -101,6 +101,11 @@ pub struct AppState {
     /// Additive: EventKit stays the default, and turning this off leaves
     /// detection exactly as it was.
     pub gcal: gcal::Connection,
+    /// The last calendar window the sidecar reported, and the calendars it came
+    /// from. Held so the menu bar and the settings list can read them without a
+    /// round trip to EventKit that would need calendar permission again.
+    pub upcoming: Mutex<Vec<detect::CalendarEvent>>,
+    pub calendars: Mutex<Vec<detect::calendar::CalendarSource>>,
     /// An app awaiting its one-time "always or never" answer.
     ///
     /// Held rather than only emitted, for the same reason permissions are
@@ -1039,6 +1044,12 @@ pub const SETTING_RETENTION: &str = "privacy.audio_retention";
 pub const SETTING_GCAL_CLIENT_ID: &str = "gcal.client_id";
 /// Whether the Google calendar source is switched on.
 pub const SETTING_GCAL_ENABLED: &str = "gcal.enabled";
+/// Calendars the user has switched off, as a JSON array of EventKit ids.
+pub const SETTING_HIDDEN_CALENDARS: &str = "calendar.hidden";
+/// Offer entries with nobody else on them.
+pub const SETTING_INCLUDE_SOLO: &str = "detect.include_solo_events";
+/// Show the next meeting in the macOS menu bar.
+pub const SETTING_SHOW_UPCOMING: &str = "tray.show_upcoming";
 
 /// Detection settings as the UI sees them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1048,12 +1059,20 @@ pub struct DetectionSettings {
     pub lead_ms: i64,
     pub mic_enabled: bool,
     pub calendar_enabled: bool,
+    /// Offer entries with no link, no location and nobody else on them.
+    /// Off by default: those are focus time, and offering to record one is
+    /// what teaches a user to dismiss the popup on sight.
+    pub include_solo_events: bool,
+    /// Put the next meeting in the macOS menu bar.
+    pub show_upcoming_in_menu_bar: bool,
 }
 
 impl Default for DetectionSettings {
     fn default() -> Self {
         Self {
             lead_ms: 90_000,
+            include_solo_events: false,
+            show_upcoming_in_menu_bar: false,
             // Both off until the user opts in. Detection watches what other
             // apps are doing and reads the calendar; neither should start
             // happening because the app was launched.
@@ -1076,7 +1095,28 @@ pub fn load_settings(conn: &rusqlite::Connection) -> DetectionSettings {
         calendar_enabled: read(SETTING_CALENDAR_ENABLED)
             .map(|v| v == "1")
             .unwrap_or(defaults.calendar_enabled),
+        include_solo_events: read(SETTING_INCLUDE_SOLO)
+            .map(|v| v == "1")
+            .unwrap_or(defaults.include_solo_events),
+        show_upcoming_in_menu_bar: read(SETTING_SHOW_UPCOMING)
+            .map(|v| v == "1")
+            .unwrap_or(defaults.show_upcoming_in_menu_bar),
     }
+}
+
+/// The calendars whose events are ignored.
+///
+/// Stored as the *hidden* set rather than the visible one so a calendar added
+/// after the choice was made shows up by default. The other way round, every
+/// new calendar would arrive silently switched off.
+pub fn hidden_calendars(conn: &rusqlite::Connection) -> HashSet<String> {
+    repo::get_setting(conn, SETTING_HIDDEN_CALENDARS)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
 }
 
 /// The user's stored per-app rules, keyed by bundle id.
@@ -1149,9 +1189,88 @@ fn on_mic_started(app: &tauri::AppHandle, apps: &[sidecar::MicApp]) {
     }
 }
 
+// ------------------------------------------------------- visible calendars
+
+/// Every calendar EventKit reports, with the user's on/off choice applied.
+///
+/// Empty until the sidecar has reported once — that is honestly "not known
+/// yet" rather than "you have no calendars", and the UI says so.
+#[tauri::command]
+fn calendar_sources(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<detect::calendar::CalendarSource>, String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    let hidden = hidden_calendars(db.connection());
+    drop(db);
+    let known = state
+        .calendars
+        .lock()
+        .map_err(|_| "calendars lock poisoned")?;
+    Ok(detect::calendar::with_visibility(&known, &hidden))
+}
+
+/// Switches one calendar on or off.
+#[tauri::command]
+fn calendar_set_visible(
+    state: tauri::State<'_, AppState>,
+    calendar_id: String,
+    visible: bool,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    let mut hidden = hidden_calendars(db.connection());
+    if visible {
+        hidden.remove(&calendar_id);
+    } else {
+        hidden.insert(calendar_id);
+    }
+    // Sorted so the stored value is stable rather than reordering on every
+    // write — a set has no order, and a diff of the settings row should mean
+    // something changed.
+    let mut list: Vec<String> = hidden.into_iter().collect();
+    list.sort();
+    repo::set_setting(
+        db.connection(),
+        SETTING_HIDDEN_CALENDARS,
+        &serde_json::to_string(&list).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Switches every calendar back on.
+#[tauri::command]
+fn calendar_reset_visibility(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::set_setting(db.connection(), SETTING_HIDDEN_CALENDARS, "[]").map_err(|e| e.to_string())
+}
+
+/// Sets one of the two calendar display switches.
+#[tauri::command]
+fn calendar_set_display(
+    state: tauri::State<'_, AppState>,
+    key: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let setting = match key.as_str() {
+        "includeSoloEvents" => SETTING_INCLUDE_SOLO,
+        "showUpcomingInMenuBar" => SETTING_SHOW_UPCOMING,
+        // Named rather than ignored: a typo here would otherwise be a switch
+        // that moves and does nothing.
+        other => return Err(format!("unknown display setting '{other}'")),
+    };
+    let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+    repo::set_setting(db.connection(), setting, if enabled { "1" } else { "0" })
+        .map_err(|e| e.to_string())
+}
+
 /// The calendar reported its upcoming window.
 fn on_calendar_events(app: &tauri::AppHandle, events: &[detect::CalendarEvent]) {
     let state = app.state::<AppState>();
+    if let Ok(mut window) = state.upcoming.lock() {
+        // Kept whatever happens below: the menu bar shows what is coming up
+        // even while a meeting is being recorded, and even when detection is
+        // switched off entirely.
+        *window = events.to_vec();
+    }
     if state
         .meeting
         .lock()
@@ -1163,17 +1282,31 @@ fn on_calendar_events(app: &tauri::AppHandle, events: &[detect::CalendarEvent]) 
 
     let Ok(db) = state.db.lock() else { return };
     let settings = load_settings(db.connection());
+    let hidden = hidden_calendars(db.connection());
     drop(db);
     if !settings.calendar_enabled {
         return;
     }
+
+    // Hidden calendars are dropped before anything else looks at them, so a
+    // switched-off calendar cannot raise a popup by any route.
+    let events: Vec<detect::CalendarEvent> = detect::calendar::visible(events, &hidden)
+        .into_iter()
+        .cloned()
+        .collect();
 
     let already = state
         .offered_events
         .lock()
         .map(|o| o.clone())
         .unwrap_or_default();
-    let due = detect::calendar::due(events, now_ms(), settings.lead_ms, &already);
+    let due = detect::calendar::due(
+        &events,
+        now_ms(),
+        settings.lead_ms,
+        &already,
+        settings.include_solo_events,
+    );
 
     for event in due {
         if let Ok(mut offered) = state.offered_events.lock() {
@@ -1443,6 +1576,46 @@ fn detection_builtin_apps() -> Vec<(String, String)> {
 
 // ----------------------------------------------------------------- menu bar
 
+/// The next meeting for the menu bar, or nothing.
+///
+/// Reads the window the sidecar last reported rather than asking EventKit:
+/// this runs on the tray ticker, and hitting the calendar store at 1 Hz to
+/// render a label would be absurd.
+fn next_up_title(app: &tauri::AppHandle) -> Option<String> {
+    let state = app.state::<AppState>();
+    let (show, hidden, include_solo) = {
+        let db = state.db.lock().ok()?;
+        let settings = load_settings(db.connection());
+        (
+            settings.show_upcoming_in_menu_bar,
+            hidden_calendars(db.connection()),
+            settings.include_solo_events,
+        )
+    };
+    if !show {
+        return None;
+    }
+
+    let events = state.upcoming.lock().ok()?.clone();
+    let now = now_ms();
+    // Same two filters detection uses. A calendar switched off in settings must
+    // not reappear in the menu bar, and neither should a solo hold when the
+    // user has said those are not meetings.
+    let mut soonest: Vec<&detect::CalendarEvent> = detect::calendar::visible(&events, &hidden)
+        .into_iter()
+        .filter(|event| include_solo || detect::calendar::is_meeting_shaped(event))
+        .filter(|event| event.starts_at >= now)
+        .collect();
+    soonest.sort_by_key(|event| event.starts_at);
+
+    let next = soonest.first()?;
+    tray::next_up_label(
+        next.title.as_deref().unwrap_or_default(),
+        next.starts_at,
+        now,
+    )
+}
+
 /// Rebuilds the tray menu, title and tooltip from current state.
 pub fn refresh_tray(app: &tauri::AppHandle) {
     use tauri::tray::TrayIconId;
@@ -1483,7 +1656,12 @@ pub fn refresh_tray(app: &tauri::AppHandle) {
     if let Ok(menu) = tray::build_menu(app, recording, &recent) {
         let _ = icon.set_menu(Some(menu));
     }
-    let _ = icon.set_title(Some(tray::tray_title(recording, elapsed)));
+    let next_up = next_up_title(app);
+    let _ = icon.set_title(Some(tray::tray_title(
+        recording,
+        elapsed,
+        next_up.as_deref(),
+    )));
     let _ = icon.set_tooltip(Some(tray::tray_tooltip(recording, processing)));
 }
 
@@ -1621,7 +1799,14 @@ fn spawn_sidecar(app: &tauri::AppHandle, autorun_session: bool) -> Result<String
                 sidecar::SidecarEvent::MicActivity { started, .. } if !started.is_empty() => {
                     on_mic_started(&app_handle, started);
                 }
-                sidecar::SidecarEvent::CalendarEvents { events, .. } => {
+                sidecar::SidecarEvent::CalendarEvents {
+                    events, calendars, ..
+                } => {
+                    if let Ok(mut known) = app_handle.state::<AppState>().calendars.lock() {
+                        // Replaced wholesale rather than merged: a calendar the
+                        // user deleted in Calendar.app should leave the list.
+                        *known = calendars.clone();
+                    }
                     on_calendar_events(&app_handle, events);
                 }
                 _ => {}
@@ -2415,6 +2600,8 @@ pub fn run() {
                 candidates: Mutex::new(detect::Queue::new()),
                 offered_events: Mutex::new(Vec::new()),
                 gcal: gcal::Connection::new(),
+                upcoming: Mutex::new(Vec::new()),
+                calendars: Mutex::new(Vec::new()),
                 pending_question: Mutex::new(None),
                 last_permissions: Mutex::new(None),
                 link_params: Mutex::new(link::LinkParams::default()),
@@ -2608,6 +2795,10 @@ pub fn run() {
             notion_set_options,
             notion_databases,
             notion_export,
+            calendar_sources,
+            calendar_set_visible,
+            calendar_reset_visibility,
+            calendar_set_display,
             gcal_settings,
             gcal_set_client_id,
             gcal_set_client_secret,

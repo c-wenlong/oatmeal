@@ -153,7 +153,13 @@ public enum SidecarEvent: Sendable, Equatable {
     case micActivity(started: [MicApp], stopped: [MicApp])
     /// Upcoming calendar entries (G20). Reported raw — whether one looks like a
     /// meeting is decided in Rust, where the rule is pure and tested.
-    case calendarEvents(events: [CalendarEvent], authorized: Bool)
+    ///
+    /// `calendars` is every calendar the account holds, sent with the window
+    /// rather than fetched separately: it changes about as often as the events
+    /// do, and a second round trip to learn the names of things already named
+    /// in the payload is a round trip for nothing.
+    case calendarEvents(
+        events: [CalendarEvent], calendars: [CalendarSource], authorized: Bool)
 }
 
 /// A calendar entry as read from EventKit.
@@ -166,10 +172,13 @@ public struct CalendarEvent: Codable, Sendable, Equatable {
     public let url: String?
     public let notes: String?
     public let attendeeCount: Int
+    /// Which calendar it came from, so Rust can drop the ones the user hid.
+    /// Optional because an event with no calendar is not worth discarding.
+    public let calendarId: String?
 
     public init(
         id: String, title: String?, startsAt: Int, endsAt: Int?, location: String?,
-        url: String?, notes: String?, attendeeCount: Int
+        url: String?, notes: String?, attendeeCount: Int, calendarId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -179,6 +188,25 @@ public struct CalendarEvent: Codable, Sendable, Equatable {
         self.url = url
         self.notes = notes
         self.attendeeCount = attendeeCount
+        self.calendarId = calendarId
+    }
+}
+
+/// A calendar the account holds, for the visible-calendars list.
+///
+/// Carries its colour because the list is unreadable without it: "Work" and
+/// "Work" from two accounts are told apart by the dot, exactly as they are in
+/// Calendar.app.
+public struct CalendarSource: Codable, Sendable, Equatable {
+    public let id: String
+    public let title: String
+    /// `#rrggbb`. Absent when EventKit has no colour for it.
+    public let color: String?
+
+    public init(id: String, title: String, color: String?) {
+        self.id = id
+        self.title = title
+        self.color = color
     }
 }
 
@@ -210,7 +238,7 @@ extension SidecarEvent: Codable {
         case ev, version, text, source, t0, t1, conf, mic, system, message, fatal
         case name, state, progress
         case started, stopped
-        case events, authorized
+        case events, calendars, authorized
         case protocolVersion = "protocol"
         case audioPath = "audio_path"
         case durationMs = "duration_ms"
@@ -274,6 +302,8 @@ extension SidecarEvent: Codable {
         case "calendar_events":
             self = .calendarEvents(
                 events: try c.decodeIfPresent([CalendarEvent].self, forKey: .events) ?? [],
+                calendars: try c.decodeIfPresent([CalendarSource].self, forKey: .calendars)
+                    ?? [],
                 authorized: try c.decodeIfPresent(Bool.self, forKey: .authorized) ?? false)
         default:
             throw DecodingError.dataCorruptedError(
@@ -330,9 +360,10 @@ extension SidecarEvent: Codable {
             try c.encode("mic_activity", forKey: .ev)
             try c.encode(started, forKey: .started)
             try c.encode(stopped, forKey: .stopped)
-        case let .calendarEvents(events, authorized):
+        case let .calendarEvents(events, calendars, authorized):
             try c.encode("calendar_events", forKey: .ev)
             try c.encode(events, forKey: .events)
+            try c.encode(calendars, forKey: .calendars)
             try c.encode(authorized, forKey: .authorized)
         }
     }

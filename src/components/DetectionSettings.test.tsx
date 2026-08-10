@@ -31,6 +31,8 @@ beforeEach(() => {
     leadMs: 90_000,
     micEnabled: false,
     calendarEnabled: false,
+    includeSoloEvents: false,
+    showUpcomingInMenuBar: false,
   });
   mockSet.mockResolvedValue(undefined);
   mockRules.mockResolvedValue([]);
@@ -79,6 +81,8 @@ describe("DetectionSettingsPanel", () => {
       leadMs: 90_000,
       micEnabled: false,
       calendarEnabled: true,
+      includeSoloEvents: false,
+      showUpcomingInMenuBar: false,
     });
     render(<DetectionSettingsPanel />);
 

@@ -152,6 +152,10 @@ pub enum SidecarEvent {
     CalendarEvents {
         #[serde(default)]
         events: Vec<crate::detect::CalendarEvent>,
+        /// Every calendar the account holds, sent with the window rather than
+        /// fetched separately — it changes about as often as the events do.
+        #[serde(default)]
+        calendars: Vec<crate::detect::calendar::CalendarSource>,
         #[serde(default)]
         authorized: bool,
     },

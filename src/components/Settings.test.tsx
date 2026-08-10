@@ -1,10 +1,13 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Settings, detectionSummary, paneTitle } from "./Settings";
+import { Settings, detectionSummary, googleSummary, paneTitle } from "./Settings";
 import { PANES, navGroups, type Pane } from "./SettingsNav";
-import { detectionSettings } from "../lib/tauri";
+import { detectionSettings, gcalSettings } from "../lib/tauri";
 
-vi.mock("../lib/tauri", () => ({ detectionSettings: vi.fn() }));
+vi.mock("../lib/tauri", () => ({
+  detectionSettings: vi.fn(),
+  gcalSettings: vi.fn(),
+}));
 
 // The rows wrap the real cards, every one of which reaches for Tauri. These
 // tests are about which pane shows what, not about any card's behaviour — so
@@ -14,6 +17,9 @@ vi.mock("./DetectionSettings", () => ({
 }));
 vi.mock("./GoogleCalendarCard", () => ({
   GoogleCalendarCard: () => <div data-testid="card-calendar" />,
+}));
+vi.mock("./CalendarPane", () => ({
+  CalendarPane: () => <div data-testid="calendar-pane" />,
 }));
 vi.mock("./NotionCard", () => ({
   NotionCard: () => <div data-testid="card-notion" />,
@@ -42,13 +48,23 @@ const EVERY_CARD = [
 ];
 
 const mockDetection = vi.mocked(detectionSettings);
+const mockGcal = vi.mocked(gcalSettings);
 
 beforeEach(() => {
   mockDetection.mockReset();
+  mockGcal.mockReset();
+  mockGcal.mockResolvedValue({
+    connected: false,
+    clientId: null,
+    hasClientSecret: false,
+    enabled: false,
+  });
   mockDetection.mockResolvedValue({
     leadMs: 90_000,
     micEnabled: true,
     calendarEnabled: false,
+    includeSoloEvents: false,
+    showUpcomingInMenuBar: false,
   });
 });
 
@@ -119,6 +135,17 @@ describe("Settings", () => {
       open(pane.label);
       for (const id of EVERY_CARD) {
         if (screen.queryByTestId(id)) seen.add(id);
+      }
+      // Cards behind a disclosure are still reachable; the walk has to open
+      // them or the test would call a hidden card "lost".
+      for (const row of screen.queryAllByRole("button")) {
+        if (/Google Calendar|Meeting detection/.test(row.textContent ?? "")) {
+          fireEvent.click(row);
+          for (const id of EVERY_CARD) {
+            if (screen.queryByTestId(id)) seen.add(id);
+          }
+          open(pane.label);
+        }
       }
     }
     expect([...seen].sort()).toEqual([...EVERY_CARD].sort());
@@ -199,5 +226,19 @@ describe("Settings", () => {
     render(<Settings onBack={onBack} />);
     fireEvent.click(screen.getByRole("button", { name: /‹ Meetings/ }));
     expect(onBack).toHaveBeenCalled();
+  });
+});
+
+describe("googleSummary", () => {
+  it("distinguishes never-set-up from set-up-but-not-connected", () => {
+    // The two need different things from the user: one needs a credential,
+    // the other needs them to press Connect.
+    expect(googleSummary({ connected: false, clientId: null })).toBe("Not set up");
+    expect(googleSummary({ connected: false, clientId: "x" })).toBe("Not connected");
+    expect(googleSummary({ connected: true, clientId: "x" })).toBe("Connected");
+  });
+
+  it("does not claim a state before it knows one", () => {
+    expect(googleSummary(null)).toBe("—");
   });
 });

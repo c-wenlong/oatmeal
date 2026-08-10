@@ -36,13 +36,50 @@ pub fn format_elapsed(ms: i64) -> String {
     format!("{:02}:{:02}", total / 60, total % 60)
 }
 
-/// The title shown beside the icon. Empty when idle — an idle app should not
-/// occupy menu bar width it does not need.
-pub fn tray_title(recording: bool, elapsed_ms: i64) -> String {
+/// How far ahead the menu bar will name a meeting.
+///
+/// Eight hours. Beyond that it is not "upcoming", it is "today", and a menu bar
+/// that permanently reads `Standup · 7h` is just a strip of noise.
+pub const NEXT_UP_HORIZON_MS: i64 = 8 * 3600 * 1000;
+
+/// "Standup · 12m" — the next meeting and how long until it starts.
+///
+/// `None` when there is nothing to say, which is what keeps an idle app from
+/// occupying menu bar width it has not earned. An event already under way
+/// returns `None` too: "in -3m" is not a thing, and the meeting is on screen.
+pub fn next_up_label(title: &str, starts_at_ms: i64, now_ms: i64) -> Option<String> {
+    let remaining = starts_at_ms - now_ms;
+    if !(0..=NEXT_UP_HORIZON_MS).contains(&remaining) {
+        return None;
+    }
+    let minutes = remaining / 60_000;
+    let when = if minutes < 1 {
+        "now".to_string()
+    } else if minutes < 60 {
+        format!("{minutes}m")
+    } else {
+        // "1h" rather than "1h 0m": the zero adds a character and no meaning.
+        let (hours, rest) = (minutes / 60, minutes % 60);
+        if rest == 0 {
+            format!("{hours}h")
+        } else {
+            format!("{hours}h {rest}m")
+        }
+    };
+    // Short: this shares the menu bar with everything else the user runs.
+    Some(format!("{} · {when}", menu_label(title, 18)))
+}
+
+/// The title shown beside the icon. Empty when idle with nothing coming up —
+/// an idle app should not occupy menu bar width it does not need.
+///
+/// Recording wins over the next meeting. Both are true at once often enough,
+/// and the elapsed timer is the one the user is actually watching.
+pub fn tray_title(recording: bool, elapsed_ms: i64, next_up: Option<&str>) -> String {
     if recording {
         format_elapsed(elapsed_ms)
     } else {
-        String::new()
+        next_up.unwrap_or_default().to_string()
     }
 }
 
@@ -246,8 +283,66 @@ mod tests {
 
     #[test]
     fn an_idle_tray_takes_no_menu_bar_width() {
-        assert_eq!(tray_title(false, 60_000), "");
-        assert_eq!(tray_title(true, 60_000), "01:00");
+        assert_eq!(tray_title(false, 60_000, None), "");
+        assert_eq!(tray_title(true, 60_000, None), "01:00");
+    }
+
+    #[test]
+    fn recording_wins_the_menu_bar_over_the_next_meeting() {
+        // Both are true at once often enough. The elapsed timer is the one the
+        // user is watching, and the menu bar has room for exactly one.
+        assert_eq!(tray_title(true, 60_000, Some("Standup · 5m")), "01:00");
+        assert_eq!(tray_title(false, 0, Some("Standup · 5m")), "Standup · 5m");
+    }
+
+    #[test]
+    fn the_next_meeting_reads_as_a_countdown() {
+        let now = 1_000_000_000;
+        assert_eq!(
+            next_up_label("Standup", now + 12 * 60_000, now).as_deref(),
+            Some("Standup · 12m")
+        );
+        assert_eq!(
+            next_up_label("Standup", now + 30_000, now).as_deref(),
+            Some("Standup · now")
+        );
+        assert_eq!(
+            next_up_label("Standup", now + 65 * 60_000, now).as_deref(),
+            Some("Standup · 1h 5m")
+        );
+        // "1h 0m" spends a character to say nothing.
+        assert_eq!(
+            next_up_label("Standup", now + 120 * 60_000, now).as_deref(),
+            Some("Standup · 2h")
+        );
+    }
+
+    #[test]
+    fn a_meeting_already_under_way_is_not_counted_down_to() {
+        // "in -3m" is not a thing, and the meeting is already on screen.
+        let now = 1_000_000_000;
+        assert!(next_up_label("Standup", now - 1, now).is_none());
+    }
+
+    #[test]
+    fn nothing_far_enough_ahead_leaves_the_menu_bar_alone() {
+        // A strip permanently reading `Standup · 7h` is noise, not information.
+        let now = 1_000_000_000;
+        assert!(next_up_label("Standup", now + NEXT_UP_HORIZON_MS + 1, now).is_none());
+        assert!(next_up_label("Standup", now + NEXT_UP_HORIZON_MS, now).is_some());
+    }
+
+    #[test]
+    fn a_long_title_is_cut_before_it_reaches_the_menu_bar() {
+        let now = 1_000_000_000;
+        let label = next_up_label(
+            "Quarterly planning review with the whole team",
+            now + 60_000,
+            now,
+        )
+        .unwrap();
+        assert!(label.chars().count() <= 18 + " · 1m".chars().count());
+        assert!(label.ends_with(" · 1m"));
     }
 
     #[test]

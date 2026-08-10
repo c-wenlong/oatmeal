@@ -2004,10 +2004,42 @@ input:focus {
 
 .settings-row {
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* A third column for a control parked hard right — a switch, in every row
+     that has one. Rows without a control still lay out on two, because the
+     track collapses to nothing. */
+  grid-template-columns: auto 1fr auto;
   gap: var(--s-3);
   align-items: start;
   padding: var(--s-4);
+}
+
+/* Calendars are a list of names, not a list of paragraphs: tighter, and the
+   dot sits on the text baseline rather than floating above it. */
+.calendar-row {
+  align-items: center;
+  padding: var(--s-3) var(--s-4);
+}
+
+.calendar-dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  /* The colour is the only thing telling two "Work" calendars apart, so it is
+     not allowed to be squeezed by a long title. */
+  flex: none;
+  align-self: center;
+}
+
+.settings-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.settings-reset {
+  font-size: var(--t-small);
+  padding: 0;
 }
 
 /* Dashed, and inset to the text column — the separator belongs to the content,

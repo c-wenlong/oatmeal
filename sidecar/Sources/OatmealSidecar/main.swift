@@ -132,8 +132,8 @@ let micWatcher = MicWatcher(ignoring: [ProcessInfo.processInfo.processIdentifier
     emit(.micActivity(started: startedApps, stopped: stoppedApps))
 }
 
-let calendarWatcher = CalendarWatcher { events in
-    emit(.calendarEvents(events: events, authorized: true))
+let calendarWatcher = CalendarWatcher { events, calendars in
+    emit(.calendarEvents(events: events, calendars: calendars, authorized: true))
 }
 
 let micTranscriber = StreamingTranscriber(
@@ -316,13 +316,14 @@ while let line = readLine(strippingNewline: true) {
         Thread.detachNewThread {
             if request && !CalendarWatcher.isAuthorized {
                 calendarWatcher.requestAccess { granted in
-                    emit(.calendarEvents(events: [], authorized: granted))
+                    emit(.calendarEvents(events: [], calendars: [], authorized: granted))
                     if granted { calendarWatcher.start() }
                 }
             } else {
                 emit(
                     .calendarEvents(
                         events: CalendarWatcher.isAuthorized ? calendarWatcher.fetch() : [],
+                        calendars: calendarWatcher.sources(),
                         authorized: CalendarWatcher.isAuthorized))
                 if CalendarWatcher.isAuthorized { calendarWatcher.start() }
             }

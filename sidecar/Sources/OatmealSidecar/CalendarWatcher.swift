@@ -29,11 +29,14 @@ final class CalendarWatcher {
     private let horizon: TimeInterval = 24 * 3600
 
     private let store = EKEventStore()
-    private let onEvents: ([CalendarEvent]) -> Void
+    /// Handed both the window and the calendar list: the list is only ever
+    /// wanted alongside the events, and passing it here keeps the caller from
+    /// having to reach back into the watcher it is still constructing.
+    private let onEvents: ([CalendarEvent], [CalendarSource]) -> Void
     private var timer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "oatmeal.sidecar.calendar")
 
-    init(onEvents: @escaping ([CalendarEvent]) -> Void) {
+    init(onEvents: @escaping ([CalendarEvent], [CalendarSource]) -> Void) {
         self.onEvents = onEvents
     }
 
@@ -76,7 +79,7 @@ final class CalendarWatcher {
             // not granted access, and detection works without it.
             return
         }
-        onEvents(fetch())
+        onEvents(fetch(), sources())
     }
 
     /// Reads the upcoming window.
@@ -105,7 +108,40 @@ final class CalendarWatcher {
                 // extraction happens on the Rust side.
                 url: event.url?.absoluteString,
                 notes: event.notes,
-                attendeeCount: event.attendees?.count ?? 0)
+                attendeeCount: event.attendees?.count ?? 0,
+                // Which calendar it came from. The predicate above still asks
+                // for all of them — hiding one is a display choice, and making
+                // it here would mean re-reading EventKit on every toggle.
+                calendarId: event.calendar?.calendarIdentifier)
         }
+    }
+
+    /// Every calendar the account holds.
+    ///
+    /// Read alongside the events rather than on request: it changes about as
+    /// often as they do, and the list is useless without them anyway.
+    func sources() -> [CalendarSource] {
+        guard Self.isAuthorized else { return [] }
+        return store.calendars(for: .event).map { calendar in
+            CalendarSource(
+                id: calendar.calendarIdentifier,
+                title: calendar.title,
+                color: Self.hex(calendar.cgColor))
+        }
+    }
+
+    /// `#rrggbb` for the dot beside a calendar's name.
+    ///
+    /// Converted to sRGB first: EventKit hands back whatever space the calendar
+    /// was created in, and reading raw components from a non-RGB space gives
+    /// colours that are simply wrong rather than merely approximate.
+    static func hex(_ color: CGColor?) -> String? {
+        guard let color,
+            let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+            let converted = color.converted(to: srgb, intent: .defaultIntent, options: nil),
+            let parts = converted.components, parts.count >= 3
+        else { return nil }
+        let byte = { (v: CGFloat) in Int((max(0, min(1, v)) * 255).rounded()) }
+        return String(format: "#%02x%02x%02x", byte(parts[0]), byte(parts[1]), byte(parts[2]))
     }
 }

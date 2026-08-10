@@ -268,6 +268,10 @@ export interface DetectionSettings {
   leadMs: number;
   micEnabled: boolean;
   calendarEnabled: boolean;
+  /** Offer entries with no link, no location and nobody else on them. */
+  includeSoloEvents: boolean;
+  /** Put the next meeting in the macOS menu bar. */
+  showUpcomingInMenuBar: boolean;
 }
 
 /** Mirrors `DetectionRule` in src-tauri/src/db/repo.rs. */
@@ -420,6 +424,15 @@ export interface ExportResult {
   /** False when an existing page was updated. */
   created: boolean;
   blocks: number;
+}
+
+/** Mirrors `CalendarSource` in src-tauri/src/detect/calendar.rs. */
+export interface CalendarSource {
+  id: string;
+  title: string;
+  /** `#rrggbb`, or null when EventKit has no colour for it. */
+  color: string | null;
+  visible: boolean;
 }
 
 /** Mirrors `GcalSettings` in src-tauri/src/lib.rs. */

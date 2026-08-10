@@ -14,7 +14,7 @@
 | 5 · Autonomy | G19–G23 | ✅ **Complete** (see notes) |
 | 6 · Corpus | G24–G25 | ✅ **Complete** |
 | 7 · Ship | G26–G29 | ✅ **Complete** (G29: signed + notarized 2026-08-07; auto-update unproven) |
-| 8 · The interface | G30–G39 | 🚧 **In progress** — see [ui-teardown.md](./ui-teardown.md) |
+| 8 · The interface | G30–G40 | 🚧 **In progress** — see [ui-teardown.md](./ui-teardown.md) |
 
 **Speaker bleed is fixed** (G2 finding #2, carried since Phase 0). `EchoSuppressor`
 drops mic lines that are the speakers coming back through the room. Hardware AEC was
@@ -939,6 +939,40 @@ the sidebar rather than replacing the screen. Leaving the pane closes the detail
 back to Detection from Models should show Detection, not a sub-screen opened four panes
 ago. And the summary is fetched **only by the pane that shows it** — the About pane has
 no reason to call into Tauri to answer a question it never asks.
+
+### G40 · The calendar pane
+**Depends on:** G39
+**Build:** Granola's Calendar screen — display switches, and a list of the account's
+calendars each with a colour dot and a switch.
+**Done when:** a calendar switched off here cannot raise a popup by any route, and every
+switch on the page changes real behaviour.
+**Status:** ✅ Done.
+
+**Nothing here is a mock.** The rule was that a control gets drawn only if the backend
+can honour it, so all three were built end to end rather than two of them being painted
+on:
+
+- **Visible calendars** — EventKit already read every calendar (`calendars: nil`), it
+  just never said which one an event came from. The sidecar now tags each event with its
+  `calendarIdentifier` and reports the calendar list beside the window; the filter is in
+  Rust, where the rule is pure and tested, so the sidecar stays a dumb reader.
+- **Show events with no participants** — relaxes `is_meeting_shaped`, which is the
+  existing rule for whether an entry is worth offering. Off by default and it should
+  stay off for most people: those entries are focus time.
+- **Show upcoming meetings in menu bar** — the tray had a title used only while
+  recording. It now also renders `Standup · 12m` when idle, from the last window the
+  sidecar reported rather than a 1 Hz read of EventKit.
+
+Two decisions worth keeping. **Hidden calendars are stored, not visible ones**, so a
+calendar added after the choice was made shows up by default; the other way round, every
+new calendar would arrive silently switched off and the user would never learn it
+existed. And the menu-bar label reuses the *same* two filters detection uses — a
+calendar switched off in settings must not reappear in the menu bar.
+
+The Google OAuth path is not in the list and cannot be: it reads `primary` only, and
+`calendar.events.readonly` cannot ask for a calendar list. It sits behind a disclosure
+labelled "Other accounts", because inline it is a two-field credential form that would
+be the loudest thing on a page of quiet rows.
 
 ## Sequencing at a glance
 

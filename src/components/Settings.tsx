@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { DetectionSettingsPanel } from "./DetectionSettings";
-import { detectionSettings } from "../lib/tauri";
+import { detectionSettings, gcalSettings } from "../lib/tauri";
+import { CalendarPane } from "./CalendarPane";
 import { GoogleCalendarCard } from "./GoogleCalendarCard";
 import { NotionCard } from "./NotionCard";
 import { PermissionsCard } from "./PermissionsCard";
@@ -9,6 +10,7 @@ import { ProviderCard } from "./ProviderCard";
 import { SettingsDisclosure, SettingsGroup, SettingsRow } from "./SettingsRow";
 import { PANES, SettingsNav, type PaneId } from "./SettingsNav";
 import { UpdateCard } from "./UpdateCard";
+import type { GcalSettings } from "../types";
 
 /**
  * Everything that is about the app rather than about a meeting.
@@ -39,6 +41,17 @@ export function detectionSummary(
   return on.length === 0 ? "Off" : on.join(" and ");
 }
 
+/** What the Google Calendar row says at a glance. */
+export function googleSummary(
+  settings: { connected: boolean; clientId: string | null } | null,
+): string {
+  if (!settings) return "—";
+  if (settings.connected) return "Connected";
+  // "Not set up" rather than "Not connected" when there is no credential yet:
+  // the two need different things from the user.
+  return settings.clientId ? "Not connected" : "Not set up";
+}
+
 /** The heading over a pane — its sidebar name, said once more in full size. */
 export function paneTitle(id: PaneId): string {
   return PANES.find((pane) => pane.id === id)?.label ?? "Settings";
@@ -49,8 +62,9 @@ export function Settings({ onBack }: { onBack: () => void }) {
     micEnabled: boolean;
     calendarEnabled: boolean;
   } | null>(null);
+  const [gcal, setGcal] = useState<GcalSettings | null>(null);
   const [pane, setPane] = useState<PaneId>("capture");
-  const [detail, setDetail] = useState<"detection" | null>(null);
+  const [detail, setDetail] = useState<"detection" | "google" | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -66,6 +80,13 @@ export function Settings({ onBack }: { onBack: () => void }) {
      puts. */
   useEffect(() => {
     if (pane === "detection") void refresh();
+    if (pane === "calendar") {
+      // Same reason as the detection summary: the row states a fact, and the
+      // detail behind it is where that fact gets changed.
+      gcalSettings()
+        .then(setGcal)
+        .catch(() => setGcal(null));
+    }
   }, [refresh, pane, detail]);
 
   /* Leaving the pane leaves its sub-screen with it. Otherwise Detection would
@@ -80,7 +101,19 @@ export function Settings({ onBack }: { onBack: () => void }) {
     <div className="settings-shell" data-testid="settings">
       <SettingsNav current={pane} onSelect={select} onBack={onBack} />
       <div className="settings">
-        {detail === "detection" ? (
+        {detail === "google" ? (
+          <div data-testid="settings-google">
+            <button className="document-back" onClick={() => setDetail(null)}>
+              ‹ Calendar
+            </button>
+            <h1 className="library-title settings-title">Google Calendar</h1>
+            <div className="settings-group">
+              <SettingsRow icon="share">
+                <GoogleCalendarCard />
+              </SettingsRow>
+            </div>
+          </div>
+        ) : detail === "detection" ? (
           <div data-testid="settings-detection">
             <button className="document-back" onClick={() => setDetail(null)}>
               ‹ Detection
@@ -116,11 +149,22 @@ export function Settings({ onBack }: { onBack: () => void }) {
             )}
 
             {pane === "calendar" && (
-              <SettingsGroup label="Accounts">
-                <SettingsRow icon="calendar">
-                  <GoogleCalendarCard />
-                </SettingsRow>
-              </SettingsGroup>
+              <>
+                <CalendarPane />
+                {/* Behind a disclosure, like meeting detection: inline it is a
+                    two-field credential form with its own prose, and it would
+                    be the loudest thing on a page of quiet rows — for the
+                    exception case that most people never touch. */}
+                <SettingsGroup label="Other accounts">
+                  <SettingsDisclosure
+                    icon="share"
+                    title="Google Calendar"
+                    subtitle="For a calendar the macOS Calendar app does not sync"
+                    value={googleSummary(gcal)}
+                    onOpen={() => setDetail("google")}
+                  />
+                </SettingsGroup>
+              </>
             )}
 
             {pane === "models" && (
