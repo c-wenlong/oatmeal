@@ -13,11 +13,35 @@ import SidecarProtocol
 //                     need neither a microphone nor Screen Recording permission.
 //   --fast            collapse scripted delays (fixture mode only)
 //   --crash-on-start  exit(9) immediately after `start`, to exercise supervisor restart
+//   --bench <file>    transcribe a file as fast as the machine allows and report
+//                     timings and memory on stderr. A measurement tool, not part
+//                     of the protocol: it never reaches the loop below.
 
-let arguments = Set(CommandLine.arguments.dropFirst())
+let rawArguments = Array(CommandLine.arguments.dropFirst())
+let arguments = Set(rawArguments)
 let fixtureMode = arguments.contains("--fixture")
 let fast = arguments.contains("--fast")
 let crashOnStart = arguments.contains("--crash-on-start")
+
+// Before anything else: the bench neither speaks the protocol nor needs the
+// capture stack, and starting either would measure them too.
+if let flag = rawArguments.firstIndex(of: "--bench"), flag + 1 < rawArguments.count {
+    let path = rawArguments[flag + 1]
+    let model = ProcessInfo.processInfo.environment["OATMEAL_ASR_MODEL"] ?? "small.en"
+    let window = Double(ProcessInfo.processInfo.environment["OATMEAL_BENCH_WINDOW"] ?? "") ?? 30
+    // Run it on a Task and block, rather than awaiting at top level. A
+    // top-level `await` makes the whole of this file an async context, which
+    // silently changes what the protocol loop below is allowed to do — the
+    // bench is not worth altering the sidecar's execution semantics for.
+    let finished = DispatchSemaphore(value: 0)
+    var code: Int32 = 0
+    Task {
+        code = await Bench.run(path: path, model: model, windowSeconds: window)
+        finished.signal()
+    }
+    finished.wait()
+    exit(code)
+}
 
 let stdoutLock = NSLock()
 
