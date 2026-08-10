@@ -1557,7 +1557,12 @@ input:focus {
 }
 
 .overflow-item {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  /* The chord sits hard right, and the gap keeps it off the label on the one
+     item that has one. */
+  justify-content: space-between;
+  gap: var(--s-5);
   width: 100%;
   text-align: left;
   border: 0;
@@ -1572,6 +1577,14 @@ input:focus {
 
 .overflow-item:hover {
   background: var(--bg);
+}
+
+/* A reminder, not a second label: quiet enough that the eye reads the item. */
+.overflow-chord {
+  color: var(--muted);
+  opacity: var(--dim-2);
+  font-size: var(--t-small);
+  white-space: nowrap;
 }
 
 /* ----------------------------------------------------------- template pill

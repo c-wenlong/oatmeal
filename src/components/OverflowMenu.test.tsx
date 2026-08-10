@@ -70,6 +70,22 @@ describe("OverflowMenu", () => {
     expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
+  it("shows the chord for an item that has one", () => {
+    render(
+      <OverflowMenu
+        items={[
+          { label: "Settings", shortcut: "⌘,", onSelect: () => {} },
+          { label: "Workbench", onSelect: () => {} },
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("more"));
+    expect(screen.getByText("⌘,")).toBeInTheDocument();
+    // And the item is still found by its name alone: the chord is decoration
+    // for the eye, not part of what the item is called.
+    expect(screen.getByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
+  });
+
   it("reports its state to assistive technology", () => {
     render(<OverflowMenu items={[{ label: "Settings", onSelect: () => {} }]} />);
     const button = screen.getByLabelText("more");

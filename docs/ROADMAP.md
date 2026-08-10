@@ -903,6 +903,16 @@ pane appended at the bottom cannot silently teleport into a group near the top b
 it happened to share a name. The current pane carries `aria-current="page"` — the tint
 alone is the kind of signal that disappears for a colour-blind reader.
 
+**`⌘,` opens settings** from any screen, as it does in every Mac app. In-app rather than
+a global hotkey: `⌘,` belongs to whichever app is in front, and registering it
+system-wide — the way the record hotkey is registered, deliberately — would take it away
+from all of them. Checked before building it that nothing already claims the chord:
+Tauri's default macOS app menu is About / Services / Hide / Quit, with no Preferences
+item, so the keystroke reaches the webview rather than being swallowed by the OS.
+
+That absence is also why the chord is printed next to Settings in the `…` menu. With no
+app menu to find it in, an unadvertised shortcut is one nobody presses.
+
 Detection keeps the disclosure it got last round, and its detail screen now sits beside
 the sidebar rather than replacing the screen. Leaving the pane closes the detail: coming
 back to Detection from Models should show Detection, not a sub-screen opened four panes

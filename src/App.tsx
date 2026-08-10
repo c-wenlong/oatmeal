@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RecordCard } from "./components/RecordCard";
 import { SidecarCard } from "./components/SidecarCard";
 import { HealthCard } from "./components/HealthCard";
@@ -11,6 +11,7 @@ import { MeetingDocument } from "./components/MeetingDocument";
 import { AskBar } from "./components/AskBar";
 import { Settings } from "./components/Settings";
 import { OverflowMenu } from "./components/OverflowMenu";
+import { SETTINGS_SHORTCUT, isSettingsShortcut } from "./lib/shortcuts";
 
 /**
  * Which window this is.
@@ -63,6 +64,27 @@ function MainWindow() {
   const [view, setView] = useState<View>({ screen: "library" });
 
   /**
+   * `⌘,` opens settings, from wherever you are.
+   *
+   * On the window rather than on a screen: the shortcut is a property of the
+   * app, and one that only worked on the library would be a shortcut you have
+   * to navigate to. Pressing it while settings is already open leaves it open
+   * on the pane you were reading, which is what every Mac app does.
+   *
+   * Not registered as a global hotkey. `⌘,` belongs to whichever app is in
+   * front, and taking it system-wide would break it in all of them.
+   */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!isSettingsShortcut(event)) return;
+      event.preventDefault();
+      setView({ screen: "settings" });
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  /**
    * Opens a meeting and scrolls to a moment in it.
    *
    * Routed through an event rather than lifted state: `RecordCard` already
@@ -108,7 +130,13 @@ function MainWindow() {
             />
             <OverflowMenu
               items={[
-                { label: "Settings", onSelect: () => setView({ screen: "settings" }) },
+                {
+                  label: "Settings",
+                  // Shown, because an undiscoverable shortcut is one nobody
+                  // presses. There is no app menu here to find it in.
+                  shortcut: SETTINGS_SHORTCUT,
+                  onSelect: () => setView({ screen: "settings" }),
+                },
                 // The workbench survives here alone. It still holds the transcript
                 // and the sidecar log, and G35 is what finally gives those a home.
                 {

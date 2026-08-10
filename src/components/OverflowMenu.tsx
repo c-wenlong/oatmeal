@@ -11,6 +11,8 @@ import { useEffect, useRef, useState } from "react";
 
 export interface MenuItem {
   label: string;
+  /** The chord that does the same thing, written the way a Mac writes it. */
+  shortcut?: string;
   onSelect: () => void;
 }
 
@@ -68,7 +70,14 @@ export function OverflowMenu({
                 item.onSelect();
               }}
             >
-              {item.label}
+              <span>{item.label}</span>
+              {item.shortcut && (
+                /* aria-hidden: the chord is a hint for the eye. Read aloud it
+                   would append punctuation to the item's name. */
+                <span className="overflow-chord" aria-hidden="true">
+                  {item.shortcut}
+                </span>
+              )}
             </button>
           ))}
         </div>
