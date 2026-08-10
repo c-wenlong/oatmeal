@@ -1372,13 +1372,13 @@ input:focus {
   margin: 1rem 0 2rem;
 }
 
+/* Sentence case, like Granola's. Uppercase with letter-spacing reads as a
+   system label; these are just quiet headings above a group. */
 .settings-section {
   font-size: var(--t-small);
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-weight: 400;
   color: var(--muted);
-  margin: 2.5rem 0 0.75rem;
+  margin: 0 0 var(--s-2) 0.25rem;
 }
 
 .overflow {
@@ -1829,29 +1829,59 @@ input:focus {
 }
 
 /* ============================================================== settings
-   Settings is read the same way the library is: a quiet column of rows, not a
-   stack of panels. The cards inside it are the harness components, still doing
-   their real work — what changes is that they stop announcing themselves.
+   After Granola's Preferences screen: a section label, one rounded group, and
+   rows inside it. The dashed hairline starts after the icon column so the icons
+   read as a column rather than as decoration on each line.
 
-   Scoped under `.settings` on purpose. The same components appear on the
-   workbench, where the card treatment is correct because it sits among other
-   cards and the point there is inspection, not use. */
+   Scoped under `.settings`. The same components render on the workbench, where
+   the card frame is right because the point there is inspection. */
 
+.settings-block + .settings-block {
+  margin-top: var(--s-6);
+}
+
+.settings-group {
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s-3);
+  align-items: start;
+  padding: var(--s-4);
+}
+
+/* Dashed, and inset to the text column — the separator belongs to the content,
+   not to the whole row. */
+.settings-row + .settings-row {
+  border-top: 1px dashed var(--border);
+}
+
+.settings-icon {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--muted);
+  flex: none;
+}
+
+.settings-row-body {
+  min-width: 0;
+}
+
+/* The cards keep their behaviour and lose their frame. */
 .settings .card {
   border: 0;
   border-radius: 0;
   background: transparent;
-  padding: var(--s-4) 0;
+  padding: 0;
   margin: 0;
-  /* A hairline instead of a box: it separates without enclosing. */
-  border-top: 1px solid var(--border);
-}
-
-/* The first row under each section heading needs no rule above it — the
-   heading is already the separation. */
-.settings .settings-section + .card {
-  border-top: 0;
-  padding-top: var(--s-2);
 }
 
 .settings .card-head {
@@ -1870,11 +1900,10 @@ input:focus {
   font-size: var(--t-small);
   color: var(--muted);
   line-height: 1.5;
-  max-width: 36rem;
+  margin: 0;
 }
 
-/* One filled button per screen at most. In settings every action is equal and
-   none is the reason you came, so they all read as the same weight. */
+/* One weight for every action: in settings none of them is why you came. */
 .settings .card button.primary {
   background: transparent;
   color: var(--text);
@@ -1886,8 +1915,6 @@ input:focus {
   color: var(--accent);
 }
 
-/* Status pills were built to be glanceable on a diagnostics page. Here they
-   are incidental, so they stop shouting. */
 .settings .pill {
   background: transparent;
   border: 1px solid var(--border);
@@ -1950,6 +1977,11 @@ input:focus {
   -webkit-appearance: none;
   position: relative;
   width: 2rem;
+  /* The bare `input` rule sets `min-width: 220px` for text fields, and
+     min-width beats width — without resetting it the switch renders as a
+     220px pill. */
+  min-width: 0;
+  flex: none;
   height: 1.15rem;
   border-radius: 999px;
   border: 1px solid var(--border);
