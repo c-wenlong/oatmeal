@@ -44,6 +44,15 @@ export function Onboarding() {
   const [hasKey, setHasKey] = useState(false);
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
   const [meetings, setMeetings] = useState(0);
+  /**
+   * Whether the first look has finished.
+   *
+   * Without this, `meetings: 0` means both "no meetings yet" and "have not
+   * checked". The setup card would flash on every return to the library:
+   * mount, decide setup is needed because nothing is known, fetch, find six
+   * meetings, disappear. Until the answer is in, the honest render is nothing.
+   */
+  const [loaded, setLoaded] = useState(false);
   const [dismissed, setDismissed] = useState(
     () => localStorage.getItem(DISMISSED_KEY) === "1",
   );
@@ -66,6 +75,8 @@ export function Onboarding() {
       setMeetings((await meetingsList()).length);
     } catch {
       /* first launch, before anything exists */
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -103,7 +114,7 @@ export function Onboarding() {
     detectionSeen,
   });
 
-  if (!shouldShow(dismissed, meetings, progress)) {
+  if (!loaded || !shouldShow(dismissed, meetings, progress)) {
     return null;
   }
 
