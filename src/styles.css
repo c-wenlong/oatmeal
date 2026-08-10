@@ -1827,3 +1827,139 @@ input:focus {
   margin-left: -1.1rem;
   padding-right: 0.45rem;
 }
+
+/* ============================================================== settings
+   Settings is read the same way the library is: a quiet column of rows, not a
+   stack of panels. The cards inside it are the harness components, still doing
+   their real work — what changes is that they stop announcing themselves.
+
+   Scoped under `.settings` on purpose. The same components appear on the
+   workbench, where the card treatment is correct because it sits among other
+   cards and the point there is inspection, not use. */
+
+.settings .card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: var(--s-4) 0;
+  margin: 0;
+  /* A hairline instead of a box: it separates without enclosing. */
+  border-top: 1px solid var(--border);
+}
+
+/* The first row under each section heading needs no rule above it — the
+   heading is already the separation. */
+.settings .settings-section + .card {
+  border-top: 0;
+  padding-top: var(--s-2);
+}
+
+.settings .card-head {
+  align-items: baseline;
+  margin-bottom: var(--s-1);
+}
+
+.settings .card-head h2 {
+  font-size: var(--t-body);
+  font-weight: 500;
+  margin: 0;
+}
+
+.settings .card-note,
+.settings .empty-note {
+  font-size: var(--t-small);
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 36rem;
+}
+
+/* One filled button per screen at most. In settings every action is equal and
+   none is the reason you came, so they all read as the same weight. */
+.settings .card button.primary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.settings .card button.primary:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Status pills were built to be glanceable on a diagnostics page. Here they
+   are incidental, so they stop shouting. */
+.settings .pill {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--t-micro);
+  letter-spacing: 0.04em;
+}
+
+.settings .pill--ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+
+.settings .row {
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+.settings input[type="text"],
+.settings input[type="password"],
+.settings select {
+  font-size: var(--t-small);
+}
+
+/* ---- settings controls -------------------------------------------------
+   The harness used raw system controls, which is fine when the point is to
+   flip a flag and watch what happens. On a settings page they are the loudest
+   thing on screen: a blue slider and two 13px checkboxes, in an interface with
+   no other blue and no other 13px anything. */
+
+.settings .tuner-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--border);
+  font-size: var(--t-body);
+}
+
+.settings .tuner-row:first-of-type {
+  border-top: 0;
+}
+
+/* accent-color is one line and gets the checkbox, the radio and the range
+   track for free — worth more than any amount of hand-built switch. */
+.settings input[type="checkbox"],
+.settings input[type="range"] {
+  accent-color: var(--accent);
+}
+
+.settings input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  cursor: pointer;
+}
+
+.settings input[type="range"] {
+  max-width: 14rem;
+  flex: none;
+  cursor: pointer;
+}
+
+/* The allowed list grows with every app the user has ever been asked about,
+   and at a dozen entries it becomes the page. Bounded, it stays a setting. */
+.settings .rule-list {
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.settings .rule-columns {
+  gap: var(--s-5);
+  margin-top: var(--s-3);
+}

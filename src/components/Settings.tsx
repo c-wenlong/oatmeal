@@ -1,12 +1,9 @@
-import { DbCard } from "./DbCard";
 import { DetectionSettingsPanel } from "./DetectionSettings";
 import { GoogleCalendarCard } from "./GoogleCalendarCard";
-import { HealthCard } from "./HealthCard";
 import { NotionCard } from "./NotionCard";
 import { PermissionsCard } from "./PermissionsCard";
 import { PrivacyCard } from "./PrivacyCard";
 import { ProviderCard } from "./ProviderCard";
-import { SidecarCard } from "./SidecarCard";
 import { UpdateCard } from "./UpdateCard";
 
 /**
@@ -18,9 +15,15 @@ import { UpdateCard } from "./UpdateCard";
  * none of it belongs in front of someone reading their notes — G33 in
  * docs/ui-teardown.md.
  *
- * They stay cards on purpose. A settings screen is exactly the place a bordered
- * panel per topic is the right shape; the teardown's objection was to cards in
- * the *document*, not to cards existing.
+ * Three things that were here have gone back to the workbench: the sidecar
+ * panel, the Rust core check and the data layer. Those are diagnostics — one of
+ * them offers a "Simulate crash" button and prints an event log — and a
+ * diagnostic is not a setting no matter how tidily it is framed.
+ *
+ * What remains is styled as rows rather than cards. G33 argued a settings screen
+ * was the right place for a bordered panel per topic; seen beside the library
+ * and the document, it plainly was not. The panels made settings the one screen
+ * that still looked like the harness.
  */
 export function Settings({ onBack }: { onBack: () => void }) {
   return (
@@ -32,7 +35,6 @@ export function Settings({ onBack }: { onBack: () => void }) {
 
       <h2 className="settings-section">Capture</h2>
       <PermissionsCard />
-      <SidecarCard />
 
       <h2 className="settings-section">Detection</h2>
       <DetectionSettingsPanel />
@@ -46,11 +48,9 @@ export function Settings({ onBack }: { onBack: () => void }) {
 
       <h2 className="settings-section">Privacy and data</h2>
       <PrivacyCard />
-      <DbCard />
 
       <h2 className="settings-section">About</h2>
       <UpdateCard />
-      <HealthCard />
     </div>
   );
 }

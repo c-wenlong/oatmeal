@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { RecordCard } from "./components/RecordCard";
+import { SidecarCard } from "./components/SidecarCard";
+import { HealthCard } from "./components/HealthCard";
+import { DbCard } from "./components/DbCard";
 import { DetectionPopup } from "./components/DetectionPopup";
 import { Onboarding } from "./components/Onboarding";
 import { Library } from "./components/Library";
@@ -140,6 +143,9 @@ function MainWindow() {
 
       <Onboarding />
       <RecordCard />
+      <SidecarCard />
+      <HealthCard />
+      <DbCard />
     </main>
   );
 }
