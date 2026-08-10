@@ -9,6 +9,7 @@ import { PrivacyCard } from "./PrivacyCard";
 import { ProviderCard } from "./ProviderCard";
 import { SettingsDisclosure, SettingsGroup, SettingsRow } from "./SettingsRow";
 import { PANES, SettingsNav, type PaneId } from "./SettingsNav";
+import { SidecarLogCard } from "./SidecarLogCard";
 import { UpdateCard } from "./UpdateCard";
 import type { GcalSettings } from "../types";
 
@@ -192,11 +193,22 @@ export function Settings({ onBack }: { onBack: () => void }) {
             )}
 
             {pane === "about" && (
-              <SettingsGroup label="Version">
-                <SettingsRow icon="info">
-                  <UpdateCard />
-                </SettingsRow>
-              </SettingsGroup>
+              <>
+                <SettingsGroup label="Version">
+                  <SettingsRow icon="info">
+                    <UpdateCard />
+                  </SettingsRow>
+                </SettingsGroup>
+                {/* A diagnostic, and framed as one. It earns a place here
+                    rather than on the workbench because it is what someone
+                    reaches for when a screen is empty and they cannot tell
+                    whether that is the app's fault or a permission. */}
+                <SettingsGroup label="Diagnostics">
+                  <SettingsRow icon="eye">
+                    <SidecarLogCard />
+                  </SettingsRow>
+                </SettingsGroup>
+              </>
             )}
           </>
         )}

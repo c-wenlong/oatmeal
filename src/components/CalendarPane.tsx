@@ -3,11 +3,12 @@ import {
   calendarResetVisibility,
   calendarSetDisplay,
   calendarSetVisible,
+  calendarAccess,
   calendarSources,
   detectionSettings,
 } from "../lib/tauri";
 import { SettingsGroup, SettingsIcon } from "./SettingsRow";
-import type { CalendarSource, DetectionSettings } from "../types";
+import type { CalendarAccess, CalendarSource, DetectionSettings } from "../types";
 
 /**
  * The Calendar settings pane, after Granola's.
@@ -37,16 +38,28 @@ import type { CalendarSource, DetectionSettings } from "../types";
  * live only in Google will see it empty forever and has no way to know why
  * unless it is said.
  */
-export function emptyListNote(calendarEnabled: boolean, loaded: boolean): string {
+export function emptyListNote(
+  calendarEnabled: boolean,
+  loaded: boolean,
+  access: CalendarAccess | null,
+): string {
   if (!calendarEnabled) {
     // The honest reason. "No calendars" would read as "you have none".
     return "Calendar detection is off, so Oatmeal is not reading your calendars. Turn it on under Detection.";
   }
   if (!loaded) return "Reading your calendars…";
+  if (!access) {
+    // The sidecar has never reported. That is itself the answer, and it is a
+    // different problem from a permission the user could grant.
+    return "The sidecar has not reported yet, so nothing has been read. Check the sidecar log under About.";
+  }
+  if (!access.authorized) {
+    return "macOS has not granted Oatmeal access to your calendars. Open System Settings › Privacy & Security › Calendars.";
+  }
   return (
-    "Nothing from the macOS Calendar app yet — either it has no calendars, or it has " +
-    "not granted Oatmeal access. A connected Google account is a separate source and " +
-    "appears here only once it is connected."
+    "macOS granted access and Oatmeal read your calendars, but the Calendar app has " +
+    "none. A connected Google account is a separate source and appears above once it " +
+    "is connected."
   );
 }
 
@@ -78,13 +91,19 @@ function Switch({
 export function CalendarPane() {
   const [settings, setSettings] = useState<DetectionSettings | null>(null);
   const [sources, setSources] = useState<CalendarSource[] | null>(null);
+  const [access, setAccess] = useState<CalendarAccess | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [next, list] = await Promise.all([detectionSettings(), calendarSources()]);
+      const [next, list, granted] = await Promise.all([
+        detectionSettings(),
+        calendarSources(),
+        calendarAccess(),
+      ]);
       setSettings(next);
       setSources(list);
+      setAccess(granted);
     } catch (err) {
       setError(String(err));
     }
@@ -166,7 +185,7 @@ export function CalendarPane() {
 
         {list.length === 0 ? (
           <p className="empty-note">
-            {emptyListNote(settings.calendarEnabled, sources !== null)}
+            {emptyListNote(settings.calendarEnabled, sources !== null, access)}
           </p>
         ) : (
           <div className="settings-group">

@@ -208,6 +208,15 @@ function handlers(): Record<string, (a?: Record<string, unknown>) => unknown> {
       else throw new Error(`unknown display setting '${key}'`);
     },
 
+    calendar_access: () => ({ authorized: true, checkedAtMs: 1_770_000_000_000 }),
+    sidecar_log_tail: () => [
+      "1770000000000 [supervisor] spawned pid=4242 attempt=1",
+      "1770000000100 [sidecar] ready 0.1.1",
+      "1770000000200 [calendar] authorized=true calendars=3 events=7",
+    ],
+    sidecar_log_path: () =>
+      "/Users/you/Library/Application Support/com.kaichen.oatmeal/sidecar.log",
+
     gcal_settings: () => s.gcal,
     gcal_set_client_id: (a) => {
       s.gcal = { ...s.gcal, clientId: arg<string>(a, "clientId").trim() || null };

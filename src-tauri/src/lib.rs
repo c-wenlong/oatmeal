@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod db;
 pub mod detect;
+pub mod diag;
 pub mod embed;
 pub mod gcal;
 pub mod link;
@@ -106,6 +107,10 @@ pub struct AppState {
     /// round trip to EventKit that would need calendar permission again.
     pub upcoming: Mutex<Vec<detect::CalendarEvent>>,
     pub calendars: Mutex<Vec<detect::calendar::CalendarSource>>,
+    /// What the sidecar last said about calendar access, and when it said it.
+    /// The app was already being told this and throwing it away, which is why
+    /// an empty list could only be explained by guessing.
+    pub calendar_access: Mutex<Option<CalendarAccess>>,
     /// An app awaiting its one-time "always or never" answer.
     ///
     /// Held rather than only emitted, for the same reason permissions are
@@ -1274,6 +1279,87 @@ fn calendar_set_display(
         .map_err(|e| e.to_string())
 }
 
+/// What the sidecar last reported about calendar access.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarAccess {
+    pub authorized: bool,
+    pub checked_at_ms: i64,
+}
+
+/// The diagnosis for an empty calendar list, from the app rather than a guess.
+///
+/// `None` means the sidecar has never reported, which is itself the answer —
+/// it is not running, or the calendar watcher was never switched on.
+#[tauri::command]
+fn calendar_access(state: tauri::State<'_, AppState>) -> Result<Option<CalendarAccess>, String> {
+    Ok(*state
+        .calendar_access
+        .lock()
+        .map_err(|_| "calendar access lock poisoned")?)
+}
+
+/// The last lines the sidecar wrote, oldest first.
+#[tauri::command]
+fn sidecar_log_tail(app: tauri::AppHandle, limit: usize) -> Result<Vec<String>, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = diag::log_path(&dir);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    diag::tail(&path, limit.clamp(1, 2000)).map_err(|e| e.to_string())
+}
+
+/// Where the log is, so it can be opened in Finder or attached to a report.
+#[tauri::command]
+fn sidecar_log_path(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(diag::log_path(&dir).to_string_lossy().to_string())
+}
+
+/// Writes one supervisor event to the sidecar log.
+///
+/// Everything, not just errors: "the watcher started" is exactly as useful as
+/// "the watcher failed" when the question is why a list is empty.
+fn log_supervisor_event(app: &tauri::AppHandle, event: &sidecar::SupervisorEvent) {
+    let line = match event {
+        sidecar::SupervisorEvent::Stderr { line } => line.clone(),
+        sidecar::SupervisorEvent::Spawned { pid, attempt } => {
+            format!("[supervisor] spawned pid={pid} attempt={attempt}")
+        }
+        sidecar::SupervisorEvent::Exited {
+            code,
+            restarting_in_ms,
+        } => format!("[supervisor] exited code={code:?} restarting_in_ms={restarting_in_ms:?}"),
+        sidecar::SupervisorEvent::GaveUp { reason } => format!("[supervisor] gave up: {reason}"),
+        sidecar::SupervisorEvent::Garbled { line, error } => {
+            format!("[supervisor] unparsed line ({error}): {line}")
+        }
+        // The parsed stream is already the app's own state; logging every
+        // transcript partial would bury the diagnostics in the transcript.
+        sidecar::SupervisorEvent::Event { event } => match event {
+            sidecar::SidecarEvent::CalendarEvents {
+                events,
+                calendars,
+                authorized,
+            } => format!(
+                "[calendar] authorized={authorized} calendars={} events={}",
+                calendars.len(),
+                events.len()
+            ),
+            sidecar::SidecarEvent::Ready { version, .. } => format!("[sidecar] ready {version}"),
+            sidecar::SidecarEvent::Error { message, fatal } => {
+                format!("[sidecar] error (fatal={fatal}): {message}")
+            }
+            _ => return,
+        },
+    };
+    if let Ok(dir) = app.path().app_data_dir() {
+        let stamped = format!("{} {line}", now_ms());
+        let _ = diag::append(&diag::log_path(&dir), &stamped);
+    }
+}
+
 /// The calendar reported its upcoming window.
 fn on_calendar_events(app: &tauri::AppHandle, events: &[detect::CalendarEvent]) {
     let state = app.state::<AppState>();
@@ -1812,8 +1898,16 @@ fn spawn_sidecar(app: &tauri::AppHandle, autorun_session: bool) -> Result<String
                     on_mic_started(&app_handle, started);
                 }
                 sidecar::SidecarEvent::CalendarEvents {
-                    events, calendars, ..
+                    events,
+                    calendars,
+                    authorized,
                 } => {
+                    if let Ok(mut access) = app_handle.state::<AppState>().calendar_access.lock() {
+                        *access = Some(CalendarAccess {
+                            authorized: *authorized,
+                            checked_at_ms: now_ms(),
+                        });
+                    }
                     if let Ok(mut known) = app_handle.state::<AppState>().calendars.lock() {
                         // Replaced wholesale rather than merged: a calendar the
                         // user deleted in Calendar.app should leave the list.
@@ -1848,6 +1942,7 @@ fn spawn_sidecar(app: &tauri::AppHandle, autorun_session: bool) -> Result<String
             });
         }
 
+        log_supervisor_event(&app_handle, &event);
         let _ = app_handle.emit(SIDECAR_EVENT, &event);
 
         if autorun_session
@@ -2614,6 +2709,7 @@ pub fn run() {
                 gcal: gcal::Connection::new(),
                 upcoming: Mutex::new(Vec::new()),
                 calendars: Mutex::new(Vec::new()),
+                calendar_access: Mutex::new(None),
                 pending_question: Mutex::new(None),
                 last_permissions: Mutex::new(None),
                 link_params: Mutex::new(link::LinkParams::default()),
@@ -2807,7 +2903,10 @@ pub fn run() {
             notion_set_options,
             notion_databases,
             notion_export,
+            calendar_access,
             calendar_sources,
+            sidecar_log_tail,
+            sidecar_log_path,
             calendar_set_visible,
             calendar_reset_visibility,
             calendar_set_display,

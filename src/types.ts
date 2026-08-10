@@ -426,6 +426,12 @@ export interface ExportResult {
   blocks: number;
 }
 
+/** Mirrors `CalendarAccess` in src-tauri/src/lib.rs. */
+export interface CalendarAccess {
+  authorized: boolean;
+  checkedAtMs: number;
+}
+
 /** Mirrors `CalendarSource` in src-tauri/src/detect/calendar.rs. */
 export interface CalendarSource {
   id: string;

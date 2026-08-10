@@ -33,6 +33,14 @@ pub enum SupervisorEvent {
         line: String,
         error: String,
     },
+    /// A diagnostic line the sidecar wrote to stderr.
+    ///
+    /// Reported rather than printed. In a bundled `.app` the Rust process has
+    /// no terminal, so `eprintln!` sent the only window into what capture, the
+    /// ASR model and the calendar watcher were doing straight to nowhere.
+    Stderr {
+        line: String,
+    },
     Exited {
         code: Option<i32>,
         restarting_in_ms: Option<u64>,
@@ -198,9 +206,10 @@ impl Supervisor {
                 // capture and the ASR model are doing. Discarding them, as this
                 // used to, makes every failure in there invisible.
                 if let Some(stderr) = child.stderr.take() {
+                    let sink = on_event.clone();
                     std::thread::spawn(move || {
                         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                            eprintln!("{line}");
+                            sink(SupervisorEvent::Stderr { line });
                         }
                     });
                 }

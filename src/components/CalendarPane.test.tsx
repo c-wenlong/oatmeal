@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CalendarPane, dotColor, emptyListNote } from "./CalendarPane";
 import {
+  calendarAccess,
   calendarResetVisibility,
   calendarSetDisplay,
   calendarSetVisible,
@@ -12,6 +13,7 @@ import type { CalendarSource } from "../types";
 
 vi.mock("../lib/tauri", () => ({
   detectionSettings: vi.fn(),
+  calendarAccess: vi.fn(),
   calendarSources: vi.fn(),
   calendarSetVisible: vi.fn(),
   calendarResetVisibility: vi.fn(),
@@ -20,6 +22,7 @@ vi.mock("../lib/tauri", () => ({
 
 const mockSettings = vi.mocked(detectionSettings);
 const mockSources = vi.mocked(calendarSources);
+const mockAccess = vi.mocked(calendarAccess);
 const mockSetVisible = vi.mocked(calendarSetVisible);
 const mockReset = vi.mocked(calendarResetVisibility);
 const mockSetDisplay = vi.mocked(calendarSetDisplay);
@@ -39,6 +42,7 @@ beforeEach(() => {
     mockSetVisible,
     mockReset,
     mockSetDisplay,
+    mockAccess,
   ]) {
     m.mockReset();
   }
@@ -56,24 +60,42 @@ beforeEach(() => {
   mockSetVisible.mockResolvedValue(undefined);
   mockReset.mockResolvedValue(undefined);
   mockSetDisplay.mockResolvedValue(undefined);
+  mockAccess.mockResolvedValue({ authorized: true, checkedAtMs: 1 });
 });
 
 describe("emptyListNote", () => {
   it("says detection is off rather than that you have no calendars", () => {
     // The list is empty for two very different reasons and only one of them is
     // the user's to fix.
-    expect(emptyListNote(false, true)).toMatch(/detection is off/i);
+    expect(emptyListNote(false, true, null)).toMatch(/detection is off/i);
   });
 
   it("distinguishes still-loading from genuinely none", () => {
-    expect(emptyListNote(true, false)).toMatch(/Reading/i);
-    expect(emptyListNote(true, true)).toMatch(/macOS Calendar app/i);
+    const granted = { authorized: true, checkedAtMs: 1 };
+    expect(emptyListNote(true, false, granted)).toMatch(/Reading/i);
+    expect(emptyListNote(true, true, granted)).toMatch(/Calendar app has/i);
   });
 
   it("says a Google account is a separate source", () => {
     // Someone whose calendars live only in Google will see this list empty
     // forever, and has no way to know why unless it is said.
-    expect(emptyListNote(true, true)).toMatch(/Google account is a separate source/i);
+    expect(emptyListNote(true, true, { authorized: true, checkedAtMs: 1 })).toMatch(
+      /Google account is a separate source/i,
+    );
+  });
+
+  it("names a refused permission rather than blaming the calendar", () => {
+    // The app is told this and used to throw it away, so an empty list could
+    // only be explained by guessing at it.
+    expect(emptyListNote(true, true, { authorized: false, checkedAtMs: 1 })).toMatch(
+      /System Settings/i,
+    );
+  });
+
+  it("distinguishes a silent sidecar from a refused permission", () => {
+    // Nothing reported is a different problem from something refused, and only
+    // one of the two is the user's to fix.
+    expect(emptyListNote(true, true, null)).toMatch(/sidecar has not reported/i);
   });
 });
 
@@ -179,6 +201,6 @@ describe("CalendarPane", () => {
   it("explains an empty list instead of showing nothing", async () => {
     mockSources.mockResolvedValue([]);
     render(<CalendarPane />);
-    expect(await screen.findByText(/macOS Calendar app/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Calendar app has/i)).toBeInTheDocument();
   });
 });

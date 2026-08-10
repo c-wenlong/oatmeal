@@ -40,6 +40,7 @@ import type {
   FlowOutcome,
   UpdateStatus,
   CalendarSource,
+  CalendarAccess,
 } from "../types";
 import type { PermissionsSnapshot } from "./permissions";
 
@@ -474,6 +475,20 @@ export function gcalSetClientId(clientId: string): Promise<void> {
  */
 export function gcalSetClientSecret(clientSecret: string): Promise<void> {
   return invoke<void>("gcal_set_client_secret", { clientSecret });
+}
+
+/** What the sidecar last said about calendar access; null if it never has. */
+export function calendarAccess(): Promise<CalendarAccess | null> {
+  return invoke<CalendarAccess | null>("calendar_access");
+}
+
+/** The last lines the sidecar wrote, oldest first. */
+export function sidecarLogTail(limit = 200): Promise<string[]> {
+  return invoke<string[]>("sidecar_log_tail", { limit });
+}
+
+export function sidecarLogPath(): Promise<string> {
+  return invoke<string>("sidecar_log_path");
 }
 
 /** Every calendar EventKit reports, with the user's on/off choice applied. */
