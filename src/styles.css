@@ -2469,7 +2469,19 @@ input:focus {
   margin: 0 0 var(--s-3);
   font-size: var(--t-small);
   color: var(--muted);
-  min-height: 1.4em;
+  /* Explicit, because the clamp below reserves a box in `em` and the two have
+     to agree: inherited leading made the box shorter than two lines, so a
+     sliver of the third bled through under the clamp. */
+  line-height: 1.4;
+  /* Reserved, so the page does not jump every time a line arrives or clears. */
+  min-height: 2.8em;
+  /* Two lines at most. Unclamped, a long partial grew to four lines and pushed
+     the summary and everything under it off the screen — the transcript is a
+     progress signal here, not the document. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* Words the model actually produced, as opposed to Oatmeal talking about

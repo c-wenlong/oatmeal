@@ -8,6 +8,7 @@ import {
   meetingsList,
   meetingState,
   onMeetingState,
+  onSidecarEvent,
 } from "../lib/tauri";
 import type { MeetingState, MeetingSummary, StoredLink, Utterance } from "../types";
 import { meetingTitle } from "./Library";
@@ -55,15 +56,17 @@ export function dateLabel(ms: number): string {
 }
 
 /** The metadata pills, in the order they should read. */
-export function metaPills(meeting: MeetingSummary): string[] {
+export function metaPills(meeting: MeetingSummary, live = 0): string[] {
   const pills = [dateLabel(meeting.startedAt)];
   const duration = durationLabel(meeting.startedAt, meeting.endedAt);
   if (duration) pills.push(duration);
+  // `live` is what has arrived since this screen loaded. Without it the chip
+  // reads "0 lines" through an entire recording that is visibly producing
+  // them, which contradicts the transcript scrolling directly above it.
+  const lines = meeting.utteranceCount + live;
   // Zero lines means nothing was transcribed, which is worth seeing rather
   // than hiding behind a plural.
-  pills.push(
-    meeting.utteranceCount === 1 ? "1 line" : `${meeting.utteranceCount} lines`,
-  );
+  pills.push(lines === 1 ? "1 line" : `${lines} lines`);
   return pills;
 }
 
@@ -94,6 +97,21 @@ export function MeetingDocument({
      Rust and can change from the tray or from detection, so it is subscribed
      to rather than assumed from however this screen was opened. */
   const [recording, setRecording] = useState(false);
+  /* Lines that have arrived since this screen loaded. The summary is fetched
+     once, so without this the chip stands still through a whole recording. */
+  const [liveLines, setLiveLines] = useState(0);
+  useEffect(() => {
+    setLiveLines(0);
+    let off: (() => void) | null = null;
+    void onSidecarEvent((event) => {
+      if (event.kind === "event" && event.event.ev === "final") {
+        setLiveLines((was) => was + 1);
+      }
+    }).then((fn) => {
+      off = fn;
+    });
+    return () => off?.();
+  }, [meetingId]);
   useEffect(() => {
     let off: (() => void) | null = null;
     const apply = (state: MeetingState) =>
@@ -164,10 +182,6 @@ export function MeetingDocument({
 
   return (
     <article className="document" data-testid="meeting-document">
-      {/* What the recorder is doing, while it does it. Without this the first
-          twelve seconds of a cold start are silent and indistinguishable from
-          a broken app. */}
-      <LiveTranscript recording={recording} />
       <div className="document-head">
         <button className="document-back" onClick={onBack}>
           ‹ Meetings
@@ -191,6 +205,14 @@ export function MeetingDocument({
           ]}
         />
       </div>
+
+      {/* What the recorder is doing, while it does it — the first twelve
+          seconds of a cold start are otherwise silent and indistinguishable
+          from a broken app.
+
+          Below the chrome, never above it: placed at the top of the article it
+          pushed `‹ Meetings` and the title down the page as the text grew. */}
+      <LiveTranscript recording={recording} />
 
       {editingTitle ? (
         <input
@@ -217,7 +239,7 @@ export function MeetingDocument({
       )}
 
       <div className="document-meta">
-        {metaPills(meeting).map((pill) => (
+        {metaPills(meeting, liveLines).map((pill) => (
           <span key={pill} className="document-pill">
             {pill}
           </span>

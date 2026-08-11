@@ -243,3 +243,29 @@ describe("MeetingDocument", () => {
     expect(await screen.findByText(/no longer in the database/)).toBeInTheDocument();
   });
 });
+
+describe("metaPills, while recording", () => {
+  const meeting = {
+    id: "m1",
+    title: "T",
+    startedAt: 1_700_000_000_000,
+    endedAt: null,
+    status: "recording",
+    audioPath: null,
+    utteranceCount: 0,
+  };
+
+  it("counts lines that arrived after the screen loaded", () => {
+    // The summary is fetched once. Without this the chip read "0 lines"
+    // through a whole recording, directly under a transcript visibly
+    // producing them.
+    expect(metaPills(meeting, 0)).toContain("0 lines");
+    expect(metaPills(meeting, 1)).toContain("1 line");
+    expect(metaPills(meeting, 4)).toContain("4 lines");
+  });
+
+  it("adds to what was already stored rather than replacing it", () => {
+    // Reopening a meeting mid-recording must not restart the count at zero.
+    expect(metaPills({ ...meeting, utteranceCount: 12 }, 3)).toContain("15 lines");
+  });
+});

@@ -21,6 +21,7 @@ Then, in a browser sized to the window under test:
 | the meeting offer | `/?window=popup` | 520 × 72 |
 | the one-time app question | `/?window=popup&popup=question` | 520 × 72 |
 | settings, any pane | `/?preview=default` | 1100 × 950 |
+| a meeting, recording | `/?preview=default` then open a meeting | 1100 × 950 |
 
 ## What to assert
 
@@ -38,6 +39,22 @@ document.querySelector('.popup').scrollHeight <= 72
 ![...document.querySelectorAll('.popup button')]
   .some(b => b.hasAttribute('data-tauri-drag-region'))
 ```
+
+On the document, also check that the live status has not displaced the page:
+
+```js
+// The header is above the live line, not pushed down by it.
+const head = document.querySelector('.document-head').getBoundingClientRect()
+const live = document.querySelector('.live')?.getBoundingClientRect()
+!live || head.top < live.top
+
+// And it is clamped: a long partial must not grow past two lines.
+document.querySelector('.live').clientHeight <= 60
+```
+
+This is the check that was missing when the live status shipped above
+`‹ Meetings`, pushing the title and the summary down the page as the
+transcript grew.
 
 The `+ 1` is for sub-pixel rounding, which reports a one-pixel overflow on text
 that fits.
