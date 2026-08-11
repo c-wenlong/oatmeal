@@ -1186,6 +1186,7 @@ fn on_mic_started(app: &tauri::AppHandle, apps: &[sidecar::MicApp]) {
                     bundle_id: Some(bundle_id.to_string()),
                     app_name: mic_app.name.clone(),
                     calendar_event_id: None,
+                    join_url: None,
                     at_ms: now_ms(),
                 };
                 offer_candidate(app, candidate);
@@ -1419,6 +1420,11 @@ fn on_calendar_events(app: &tauri::AppHandle, events: &[detect::CalendarEvent]) 
                 bundle_id: None,
                 app_name: None,
                 calendar_event_id: Some(event.id.clone()),
+                // The link the entry carried, if any. `conferencing_url` also
+                // digs it out of the description, which is where most calendar
+                // integrations paste it.
+                join_url: detect::calendar::conferencing_url(event)
+                    .filter(|url| url.starts_with("http")),
                 at_ms: now_ms(),
             },
         );
@@ -1442,6 +1448,26 @@ fn offer_candidate(app: &tauri::AppHandle, candidate: detect::Candidate) {
     show_popup(app);
 }
 
+/// How big the offer is. A pill, not a dialog.
+pub const POPUP_SIZE: (f64, f64) = (460.0, 72.0);
+
+/// How far below the top of the screen it sits.
+///
+/// Clear of the menu bar rather than under it: an offer hidden behind the
+/// clock is an offer nobody answers.
+pub const POPUP_TOP_MARGIN: f64 = 8.0;
+
+/// Where the offer should appear on a screen of a given size.
+///
+/// Top centre, where macOS itself puts transient notifications and where
+/// Notion puts the same offer. The previous window took whatever position
+/// macOS handed it, which put a 190px dialog in the middle of whatever the
+/// user was reading.
+pub fn popup_origin(screen_width: f64, menu_bar_height: f64) -> (f64, f64) {
+    let x = ((screen_width - POPUP_SIZE.0) / 2.0).max(0.0);
+    (x, menu_bar_height + POPUP_TOP_MARGIN)
+}
+
 /// The floating offer window.
 ///
 /// A separate always-on-top window rather than something inside the main one:
@@ -1458,19 +1484,60 @@ pub fn show_popup(app: &tauri::AppHandle) {
 
     let built = WebviewWindowBuilder::new(app, "popup", WebviewUrl::App("index.html".into()))
         .title("Oatmeal")
-        .inner_size(360.0, 190.0)
+        .inner_size(POPUP_SIZE.0, POPUP_SIZE.1)
         .resizable(false)
         .always_on_top(true)
         // No traffic lights: this is a transient offer, and a close button
         // invites dismissing it in a way that records no decision.
         .decorations(false)
+        // So the pill can have rounded corners instead of sitting in a
+        // rectangle of window. Needs `macos-private-api`, which rules out the
+        // Mac App Store — Oatmeal ships Developer ID direct, so that costs
+        // nothing here.
+        .transparent(true)
         .skip_taskbar(true)
         .focused(false)
+        // Visible on whichever Space the user is on, which for a video call is
+        // rarely the one Oatmeal was launched in.
+        .visible_on_all_workspaces(true)
         .build();
 
-    if let Err(err) = built {
-        eprintln!("could not show the detection popup: {err}");
+    match built {
+        Ok(window) => {
+            // Placed explicitly. Left to macOS it lands wherever the last
+            // window did, which is the middle of whatever is being read.
+            if let Ok(Some(monitor)) = window.primary_monitor() {
+                let scale = monitor.scale_factor();
+                let size = monitor.size().to_logical::<f64>(scale);
+                let position = monitor.position().to_logical::<f64>(scale);
+                let (x, y) = popup_origin(size.width, 0.0);
+                let _ = window
+                    .set_position(tauri::LogicalPosition::new(position.x + x, position.y + y));
+            }
+        }
+        Err(err) => eprintln!("could not show the detection popup: {err}"),
     }
+}
+
+/// Opens the meeting link and starts recording, in that order.
+///
+/// One action because it is one intention. Joining and recording as two
+/// separate steps means doing the second one late, from another window, after
+/// the call has already started.
+#[tauri::command]
+async fn detection_join(
+    app: tauri::AppHandle,
+    candidate_id: String,
+    url: Option<String>,
+) -> Result<Option<String>, String> {
+    if let Some(url) = url.filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
+        // Reported rather than fatal: failing to open the browser is no reason
+        // to skip the recording the user just asked for.
+        if let Err(err) = tauri_plugin_opener::open_url(&url, None::<&str>) {
+            eprintln!("could not open the meeting link: {err}");
+        }
+    }
+    detection_respond(app, candidate_id, detect::Outcome::Start)
 }
 
 pub fn hide_popup(app: &tauri::AppHandle) {
@@ -2972,6 +3039,7 @@ pub fn run() {
             runtime_install_model,
             runtime_cancel_download,
             detection_respond,
+            detection_join,
             detection_answer_app,
             detection_candidates,
             detection_pending_question,
@@ -3020,6 +3088,37 @@ pub fn run() {
         ])
         .run(app_context())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod popup_tests {
+    use super::*;
+
+    #[test]
+    fn the_offer_sits_at_the_top_centre() {
+        // Where macOS puts its own transient notifications, and where Notion
+        // puts this exact offer. The window used to take whatever position
+        // macOS handed it, which put a dialog in the middle of whatever was
+        // being read.
+        let (x, y) = popup_origin(1440.0, 0.0);
+        assert_eq!(x, (1440.0 - POPUP_SIZE.0) / 2.0);
+        assert_eq!(y, POPUP_TOP_MARGIN);
+    }
+
+    #[test]
+    fn it_clears_the_menu_bar() {
+        // Under the clock is where an offer goes to be ignored.
+        let (_, y) = popup_origin(1440.0, 24.0);
+        assert!(y > 24.0, "{y} would sit under the menu bar");
+    }
+
+    #[test]
+    fn a_narrow_screen_does_not_push_it_off_the_left_edge() {
+        // A negative origin puts half the pill past the edge of the display,
+        // where the buttons cannot be clicked at all.
+        let (x, _) = popup_origin(320.0, 0.0);
+        assert_eq!(x, 0.0);
+    }
 }
 
 #[cfg(test)]

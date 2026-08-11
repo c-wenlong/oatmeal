@@ -963,16 +963,89 @@ input:focus {
 
 /* The popup window is undecorated, so this is the whole visible surface —
    it draws its own background and border rather than inheriting the page. */
+/* The offer, as a pill at the top of the screen rather than a dialog in the
+   middle of it. One row: a dot, what and why, and the two answers. The window
+   is transparent, so the rounded edge here is the whole shape — anything
+   outside this radius is desktop. */
 .popup {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: var(--s-3);
   height: 100vh;
   box-sizing: border-box;
-  padding: 16px 18px;
-  background: var(--bg, #fbf9f6);
+  padding: 0 var(--s-2) 0 var(--s-4);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  /* The whole surface is the drag handle, so the pointer should say so. */
+  cursor: grab;
+  overflow: hidden;
+}
+
+.popup:active {
+  cursor: grabbing;
+}
+
+.popup-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.popup-body {
+  flex: 1;
+  min-width: 0;
+}
+
+/* One line each: the pill is 72px tall and a wrapped title would push the
+   reason out of the window entirely. */
+.popup-title,
+.popup-reason {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.popup-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  flex: none;
+  /* Buttons are not drag handles — a control that is also a grab target
+     swallows its own click. */
+  cursor: default;
+}
+
+.popup-never {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--t-small);
+  padding: 0.3rem 0.4rem;
+  white-space: nowrap;
+}
+
+.popup-never:hover:not(:disabled) {
+  color: var(--text);
+  background: transparent;
+  border-color: transparent;
+}
+
+.popup-dismiss {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.3rem 0.5rem;
+  font-size: var(--t-small);
+}
+
+.popup-dismiss:hover:not(:disabled) {
+  color: var(--text);
+  background: transparent;
+  border-color: transparent;
 }
 
 .popup--empty {

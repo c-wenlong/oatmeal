@@ -40,6 +40,12 @@ pub struct Candidate {
     pub app_name: Option<String>,
     /// Calendar event this belongs to, when known.
     pub calendar_event_id: Option<String>,
+    /// The conferencing link, when the calendar entry carried one. Present so
+    /// the offer can be one click: joining the call and starting the recording
+    /// are the same intention, and making them two actions means doing the
+    /// second one late, from another window, after the call has started.
+    #[serde(default)]
+    pub join_url: Option<String>,
     /// When this candidate was raised.
     pub at_ms: i64,
 }
@@ -181,6 +187,7 @@ mod tests {
             bundle_id: None,
             app_name: None,
             calendar_event_id: None,
+            join_url: None,
             at_ms,
         }
     }

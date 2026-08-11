@@ -257,6 +257,8 @@ export interface Candidate {
   bundleId: string | null;
   appName: string | null;
   calendarEventId: string | null;
+  /** The conferencing link, when the calendar entry carried one. */
+  joinUrl: string | null;
   atMs: number;
 }
 

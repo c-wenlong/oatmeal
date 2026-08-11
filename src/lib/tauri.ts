@@ -319,6 +319,19 @@ export function onMeetingIndexed(
 // ----------------------------------------------------------------- detection
 
 /** Answers an offer. Returns the new meeting id when the answer was "start". */
+/**
+ * Opens the meeting link and starts recording, in that order.
+ *
+ * One call because it is one intention; the Rust side reports a failure to
+ * open the browser rather than skipping the recording that was asked for.
+ */
+export function detectionJoin(
+  candidateId: string,
+  url: string | null,
+): Promise<string | null> {
+  return invoke<string | null>("detection_join", { candidateId, url });
+}
+
 export function detectionRespond(
   candidateId: string,
   outcome: DetectionOutcome,

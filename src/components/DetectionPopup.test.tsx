@@ -1,9 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DetectionPopup, candidateHeadline, candidateReason } from "./DetectionPopup";
+import {
+  DetectionPopup,
+  primaryLabel,
+  candidateHeadline,
+  candidateReason,
+} from "./DetectionPopup";
 import {
   detectionAnswerApp,
   detectionCandidates,
+  detectionJoin,
   detectionPendingQuestion,
   detectionRespond,
   onAppQuestion,
@@ -13,6 +19,7 @@ import type { AppQuestion, Candidate } from "../types";
 
 vi.mock("../lib/tauri", () => ({
   detectionCandidates: vi.fn(),
+  detectionJoin: vi.fn(),
   detectionPendingQuestion: vi.fn(),
   detectionRespond: vi.fn(),
   detectionAnswerApp: vi.fn(),
@@ -37,6 +44,7 @@ function candidate(over: Partial<Candidate> = {}): Candidate {
     bundleId: "us.zoom.xos",
     appName: "Zoom",
     calendarEventId: null,
+    joinUrl: null,
     atMs: 0,
     ...over,
   };
@@ -110,11 +118,13 @@ describe("DetectionPopup", () => {
   });
 
   it("starts recording when asked", async () => {
+    // Routed through `detectionJoin` now, which opens a link when there is one
+    // and starts the recording either way — one action for one intention.
     mockList.mockResolvedValue([candidate()]);
     render(<DetectionPopup />);
 
     fireEvent.click(await screen.findByRole("button", { name: /start recording/i }));
-    await waitFor(() => expect(mockRespond).toHaveBeenCalledWith("c1", "start"));
+    await waitFor(() => expect(detectionJoin).toHaveBeenCalledWith("c1", null));
   });
 
   it("can dismiss just this one", async () => {
@@ -209,5 +219,59 @@ describe("DetectionPopup", () => {
     render(<DetectionPopup />);
 
     expect(await screen.findByTestId("app-question")).toBeInTheDocument();
+  });
+});
+
+describe("primaryLabel", () => {
+  it("offers to join when the calendar carried a link", () => {
+    // Joining the call and recording it are one intention. Splitting them
+    // means doing the second one late, from another window.
+    expect(primaryLabel(candidate({ joinUrl: "https://meet.google.com/abc" }))).toBe(
+      "Join and record",
+    );
+  });
+
+  it("only offers to record when there is nothing to join", () => {
+    // A mic activation has no link, and a button promising to join would open
+    // nothing.
+    expect(primaryLabel(candidate({ joinUrl: null }))).toBe("Start recording");
+  });
+});
+
+describe("the offer is movable", () => {
+  it("makes the surface a drag region but never the buttons", async () => {
+    // An undecorated window has no titlebar; without a drag region the offer
+    // is nailed to wherever macOS first put it. A button that is also a drag
+    // handle swallows its own click.
+    mockList.mockResolvedValue([candidate()]);
+    render(<DetectionPopup />);
+
+    const pill = await screen.findByTestId("detection-popup");
+    expect(pill).toHaveAttribute("data-tauri-drag-region");
+    for (const button of screen.getAllByRole("button")) {
+      expect(button).not.toHaveAttribute("data-tauri-drag-region");
+    }
+  });
+});
+
+describe("joining", () => {
+  it("opens the link and records in one action", async () => {
+    mockList.mockResolvedValue([
+      candidate({ joinUrl: "https://meet.google.com/abc", source: "calendar" }),
+    ]);
+    render(<DetectionPopup />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Join and record/ }));
+    await waitFor(() =>
+      expect(detectionJoin).toHaveBeenCalledWith("c1", "https://meet.google.com/abc"),
+    );
+  });
+
+  it("still records when there is no link to open", async () => {
+    mockList.mockResolvedValue([candidate({ joinUrl: null })]);
+    render(<DetectionPopup />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Start recording/ }));
+    await waitFor(() => expect(detectionJoin).toHaveBeenCalledWith("c1", null));
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   detectionAnswerApp,
   detectionCandidates,
+  detectionJoin,
   detectionPendingQuestion,
   detectionRespond,
   onAppQuestion,
@@ -18,6 +19,18 @@ export function candidateHeadline(candidate: Candidate): string {
     return `${candidate.appName.trim()} call`;
   }
   return "Meeting starting";
+}
+
+/**
+ * What the primary button offers.
+ *
+ * A calendar entry with a conferencing link can do both things at once, which
+ * is what the user actually wants: joining the call and recording it are one
+ * intention, and splitting them means doing the second one late, from another
+ * window, after the call has started.
+ */
+export function primaryLabel(candidate: Candidate): string {
+  return candidate.joinUrl ? "Join and record" : "Start recording";
 }
 
 /** The line under the title, saying why we think this is happening. */
@@ -78,6 +91,16 @@ export function DetectionPopup() {
     }
   }
 
+  /** Opens the call and starts recording. Falls back to recording alone. */
+  async function accept(target: Candidate) {
+    setBusy(true);
+    try {
+      await detectionJoin(target.id, target.joinUrl ?? null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function answerApp(allow: boolean) {
     if (!question) return;
     setBusy(true);
@@ -122,34 +145,53 @@ export function DetectionPopup() {
     return <div className="popup popup--empty" />;
   }
 
+  /* `data-tauri-drag-region` is what makes an undecorated window movable —
+     without it there is no titlebar to grab and the offer is nailed to wherever
+     macOS first put it. It goes on the surface, never on the buttons: a button
+     that is also a drag handle swallows its own click. */
   return (
-    <div className="popup" data-testid="detection-popup">
-      <p className="popup-title">{candidateHeadline(candidate)}</p>
-      <p className="popup-reason">{candidateReason(candidate)}</p>
+    <div className="popup" data-tauri-drag-region data-testid="detection-popup">
+      <span className="popup-dot" aria-hidden="true" />
+      <div className="popup-body" data-tauri-drag-region>
+        <p className="popup-title" data-tauri-drag-region>
+          {candidateHeadline(candidate)}
+        </p>
+        <p className="popup-reason" data-tauri-drag-region>
+          {candidateReason(candidate)}
+          {candidates.length > 1 && ` · ${candidates.length - 1} more waiting`}
+        </p>
+      </div>
       <div className="popup-actions">
         <button
           className="primary"
           disabled={busy}
-          onClick={() => void respond(candidate.id, "start")}
+          onClick={() => void accept(candidate)}
         >
-          Start recording
+          {primaryLabel(candidate)}
         </button>
-        <button disabled={busy} onClick={() => void respond(candidate.id, "ignore")}>
-          Not now
-        </button>
+        {/* Kept, compactly. Compressing this to a pill nearly dropped it, and
+            "never ask about this app again" is the control that stops a
+            detection feature training people to dismiss it on sight. */}
         {candidate.bundleId && (
           <button
-            className="link-button"
+            className="popup-never"
             disabled={busy}
+            title={`Never for ${candidate.appName ?? "this app"}`}
             onClick={() => void respond(candidate.id, "ignore_app")}
           >
             Never for {candidate.appName ?? "this app"}
           </button>
         )}
+        <button
+          className="popup-dismiss"
+          disabled={busy}
+          aria-label="Not now"
+          title="Not now"
+          onClick={() => void respond(candidate.id, "ignore")}
+        >
+          ✕
+        </button>
       </div>
-      {candidates.length > 1 && (
-        <p className="popup-reason">{candidates.length - 1} more waiting</p>
-      )}
     </div>
   );
 }
