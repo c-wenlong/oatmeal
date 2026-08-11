@@ -72,6 +72,36 @@ pub fn visible<'a>(
         .collect()
 }
 
+/// The whole list a user sees: EventKit's calendars, plus the connected
+/// account that is not one.
+///
+/// The Google source is not an EventKit calendar and never will be — its scope
+/// cannot enumerate calendars — but leaving it out of a list headed "visible
+/// calendars" makes the one source the user explicitly connected the one source
+/// they cannot find. It is one row because there is nothing to expand it into.
+///
+/// Taking it as a parameter rather than reaching for app state keeps this
+/// testable, which is the point: the first attempt at this lived inside the
+/// Tauri command, was silently lost in an edit, and nothing failed.
+pub fn sources_for_display(
+    eventkit: &[CalendarSource],
+    hidden: &std::collections::HashSet<String>,
+    google: Option<(&str, bool)>,
+) -> Vec<CalendarSource> {
+    let mut list = with_visibility(eventkit, hidden);
+    if let Some((id, enabled)) = google {
+        list.push(CalendarSource {
+            id: id.to_string(),
+            title: "Google Calendar".into(),
+            // Google's own blue, so the row reads like the others rather than
+            // like a footnote.
+            color: Some("#4285f4".into()),
+            visible: enabled,
+        });
+    }
+    list
+}
+
 /// The calendar list, with the user's choices applied.
 pub fn with_visibility(
     sources: &[CalendarSource],
@@ -212,6 +242,39 @@ mod tests {
 
     fn hidden(ids: &[&str]) -> std::collections::HashSet<String> {
         ids.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn a_connected_google_account_is_in_the_list() {
+        // It is the one source the user explicitly set up. Leaving it out of a
+        // list headed "visible calendars" is how it becomes unfindable.
+        let list = sources_for_display(&[], &hidden(&[]), Some(("google:primary", false)));
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "google:primary");
+        assert!(
+            !list[0].visible,
+            "should reflect the stored switch, not default on"
+        );
+    }
+
+    #[test]
+    fn google_sits_alongside_the_local_calendars() {
+        let list = sources_for_display(
+            &[source("work"), source("personal")],
+            &hidden(&["personal"]),
+            Some(("google:primary", true)),
+        );
+        assert_eq!(list.len(), 3);
+        assert!(list[0].visible, "work was not hidden");
+        assert!(!list[1].visible, "personal was hidden");
+        assert!(list[2].visible, "google was enabled");
+    }
+
+    #[test]
+    fn no_account_means_no_row() {
+        // A row for an account nobody connected offers a switch that controls
+        // nothing.
+        assert!(sources_for_display(&[], &hidden(&[]), None).is_empty());
     }
 
     #[test]

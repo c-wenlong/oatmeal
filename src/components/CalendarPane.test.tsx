@@ -204,3 +204,19 @@ describe("CalendarPane", () => {
     expect(await screen.findByText(/Calendar app has/i)).toBeInTheDocument();
   });
 });
+
+describe("advice when the calendar is not local", () => {
+  it("does not send a Google user to macOS settings", () => {
+    // Their calendar is not in Calendar.app and never will be. Telling them to
+    // grant macOS access is advice that leads nowhere.
+    expect(
+      emptyListNote(true, true, { authorized: false, checkedAtMs: 1 }, true),
+    ).toMatch(/Google account is connected/i);
+  });
+
+  it("still explains a refused permission when there is no account", () => {
+    expect(
+      emptyListNote(true, true, { authorized: false, checkedAtMs: 1 }, false),
+    ).toMatch(/System Settings/i);
+  });
+});

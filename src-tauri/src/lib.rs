@@ -1212,7 +1212,22 @@ fn calendar_sources(
         .calendars
         .lock()
         .map_err(|_| "calendars lock poisoned")?;
-    Ok(detect::calendar::with_visibility(&known, &hidden))
+
+    // The connected account, if there is one, alongside the local calendars.
+    let google = if state.gcal.is_connected(state.keys.as_ref()) {
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        let enabled = repo::get_setting(db.connection(), SETTING_GCAL_ENABLED)
+            .ok()
+            .flatten()
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        Some((gcal::SOURCE_ID, enabled))
+    } else {
+        None
+    };
+    Ok(detect::calendar::sources_for_display(
+        &known, &hidden, google,
+    ))
 }
 
 /// Switches one calendar on or off.

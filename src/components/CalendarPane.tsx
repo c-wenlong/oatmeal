@@ -42,7 +42,15 @@ export function emptyListNote(
   calendarEnabled: boolean,
   loaded: boolean,
   access: CalendarAccess | null,
+  googleConnected = false,
 ): string {
+  // Someone whose calendar lives in Google has no reason to grant macOS
+  // anything, and telling them to is advice that leads nowhere. The list is
+  // not empty for them anyway — their account is a row in it — so this only
+  // fires if that row is somehow missing too.
+  if (googleConnected) {
+    return "Your Google account is connected. Turn it on above to use its events for meeting detection.";
+  }
   if (!calendarEnabled) {
     // The honest reason. "No calendars" would read as "you have none".
     return "Calendar detection is off, so Oatmeal is not reading your calendars. Turn it on under Detection.";
@@ -128,6 +136,7 @@ export function CalendarPane() {
 
   const list = sources ?? [];
   const anyHidden = list.some((source) => !source.visible);
+  const googleConnected = list.some((source) => source.id === "google:primary");
 
   return (
     <>
@@ -185,7 +194,12 @@ export function CalendarPane() {
 
         {list.length === 0 ? (
           <p className="empty-note">
-            {emptyListNote(settings.calendarEnabled, sources !== null, access)}
+            {emptyListNote(
+              settings.calendarEnabled,
+              sources !== null,
+              access,
+              googleConnected,
+            )}
           </p>
         ) : (
           <div className="settings-group">
