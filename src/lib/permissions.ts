@@ -133,3 +133,24 @@ export function rowAction(
   if (capability.pane === "screen_recording" && !alreadyAsked) return "prompt";
   return "settings";
 }
+
+/**
+ * What flipping a permission switch should actually do.
+ *
+ * The switch reads as a switch, but macOS owns the state and gives an app no
+ * way to write it directly. So each direction maps to the one thing that can
+ * really happen:
+ *
+ * - **off → on** asks macOS, which shows the dialog while one can still
+ *   appear, and otherwise opens the pane where the checkbox lives.
+ * - **on → off** can only ever be Settings. No API revokes an app's own TCC
+ *   grant, and a switch that silently refused to move would be worse than one
+ *   that takes you where the move is possible.
+ */
+export function toggleAction(
+  capability: Pick<CapabilityView, "pane" | "promptable" | "state">,
+  alreadyAsked: boolean,
+): "prompt" | "settings" {
+  if (capability.state === "granted") return "settings";
+  return rowAction(capability, alreadyAsked);
+}

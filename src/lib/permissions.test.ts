@@ -5,6 +5,7 @@ import {
   capabilities,
   headline,
   rowAction,
+  toggleAction,
   type PermissionsSnapshot,
 } from "./permissions";
 
@@ -129,5 +130,35 @@ describe("rowAction", () => {
     expect(rowAction({ pane: "screen_recording", promptable: false }, true)).toBe(
       "settings",
     );
+  });
+});
+
+describe("toggleAction", () => {
+  const cap = (over: Record<string, unknown>) =>
+    ({ pane: "microphone", promptable: false, state: "denied", ...over }) as never;
+
+  it("turning it on asks macOS while a prompt can appear", () => {
+    expect(toggleAction(cap({ state: "undetermined", promptable: true }), false)).toBe(
+      "prompt",
+    );
+  });
+
+  it("turning it off can only ever be Settings", () => {
+    // No API revokes an app's own grant. A switch that silently refused to
+    // move would be worse than one that goes where the move is possible.
+    expect(toggleAction(cap({ state: "granted", promptable: false }), false)).toBe(
+      "settings",
+    );
+  });
+
+  it("a denied permission goes to Settings rather than a silent no-op", () => {
+    expect(toggleAction(cap({ state: "denied" }), false)).toBe("settings");
+  });
+
+  it("still tries screen recording once", () => {
+    // The one case CoreGraphics cannot answer, so the app asks and learns.
+    expect(
+      toggleAction(cap({ pane: "screen_recording", state: "denied" }), false),
+    ).toBe("prompt");
   });
 });

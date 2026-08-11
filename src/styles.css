@@ -371,9 +371,16 @@ button.primary:hover:not(:disabled) {
   margin-bottom: 4px;
 }
 
-/* The dot sits hard right, where the switch sits on every other row. */
-.perm-head .perm-dot {
+/* The control sits hard right, where it sits on every other settings row. */
+.perm-head .perm-dot,
+.perm-head .perm-switch {
   margin-left: auto;
+}
+
+/* The permission rows live on a card, not in a `.settings-group`, so the
+   switch styling that the settings rows get by scope has to be asked for. */
+.perm-switch {
+  flex: none;
 }
 
 .perm-title {

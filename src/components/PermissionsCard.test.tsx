@@ -130,7 +130,7 @@ describe("PermissionsCard", () => {
 
     expect(await cardTone()).toBe("err");
 
-    await userEvent.click(screen.getAllByRole("button", { name: /open settings/i })[0]);
+    await userEvent.click(screen.getByRole("switch", { name: "Microphone" }));
     expect(mockOpen).toHaveBeenCalledWith("microphone");
   });
 
@@ -142,11 +142,12 @@ describe("PermissionsCard", () => {
     // Screen Recording is offered the prompt first — CoreGraphics cannot say
     // whether it was ever asked — and only falls back to Settings once that
     // has visibly changed nothing.
-    await userEvent.click(await screen.findByRole("button", { name: /Allow/ }));
+    const toggle = await screen.findByRole("switch", { name: /Screen & System Audio/ });
+    await userEvent.click(toggle);
     act(() => emitPermissions("granted", "denied"));
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /open settings/i }),
+      screen.getByRole("switch", { name: /Screen & System Audio/ }),
     );
     expect(mockOpen).toHaveBeenCalledWith("screen_recording");
   });
@@ -217,27 +218,27 @@ describe("headlineTone", () => {
 });
 
 describe("the state is not colour alone", () => {
-  it("labels each permission's indicator", async () => {
-    // A dot that only differs by hue is unreadable to a colour-blind user and
-    // invisible to a screen reader.
+  it("carries each state in the switch, not in colour", async () => {
+    // A control that only differs by hue is unreadable to a colour-blind user
+    // and invisible to a screen reader; `checked` is announced by both.
     render(<PermissionsCard />);
     act(() => emitPermissions("granted", "denied", false));
 
-    expect(await screen.findByLabelText(/Microphone: granted/i)).toBeInTheDocument();
+    expect(await screen.findByRole("switch", { name: "Microphone" })).toBeChecked();
     expect(
-      screen.getByLabelText(/Screen & System Audio Recording: denied/i),
-    ).toBeInTheDocument();
+      screen.getByRole("switch", { name: /Screen & System Audio/ }),
+    ).not.toBeChecked();
   });
 });
 
 describe("asking macOS from the row", () => {
   it("prompts for that permission alone, not both", async () => {
     // Requesting both fires two system dialogs one after the other, which is
-    // startling from a button sitting on one row.
+    // startling from a switch sitting on one row.
     render(<PermissionsCard />);
     act(() => emitPermissions("undetermined", "granted", false));
 
-    await userEvent.click(await screen.findByRole("button", { name: /Allow/ }));
+    await userEvent.click(await screen.findByRole("switch", { name: "Microphone" }));
     expect(sidecarSend).toHaveBeenCalledWith({
       cmd: "permissions",
       request: true,
@@ -246,37 +247,65 @@ describe("asking macOS from the row", () => {
   });
 
   it("sends to System Settings once macOS has recorded a denial", async () => {
-    // The prompt never returns after a denial, so Allow would be a button that
-    // silently does nothing.
+    // The prompt never returns after a denial, so asking would do nothing
+    // visible. The switch takes the user where the change is possible.
     render(<PermissionsCard />);
     act(() => emitPermissions("denied", "granted", false));
 
-    expect(
-      await screen.findByRole("button", { name: /Open Settings/ }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Allow/ })).toBeNull();
+    await userEvent.click(await screen.findByRole("switch", { name: "Microphone" }));
+    expect(mockOpen).toHaveBeenCalledWith("microphone");
+    expect(sidecarSend).not.toHaveBeenCalledWith(
+      expect.objectContaining({ request: true }),
+    );
+  });
+
+  it("a granted permission is switched off in System Settings", async () => {
+    // No API revokes an app's own grant, so "off" can only mean "take me
+    // where it can be turned off". A switch that refused to move would be
+    // worse than one that goes somewhere useful.
+    render(<PermissionsCard />);
+    act(() => emitPermissions("granted", "granted", false));
+
+    const toggle = await screen.findByRole("switch", { name: "Microphone" });
+    expect(toggle).toBeChecked();
+    await userEvent.click(toggle);
+    expect(mockOpen).toHaveBeenCalledWith("microphone");
+  });
+
+  it("does not flip until macOS says so", async () => {
+    // Flipping optimistically would show "on" after a cancelled dialog, which
+    // is the app claiming a permission it does not have.
+    render(<PermissionsCard />);
+    act(() => emitPermissions("undetermined", "granted", false));
+
+    const toggle = await screen.findByRole("switch", { name: "Microphone" });
+    await userEvent.click(toggle);
+    expect(screen.getByRole("switch", { name: "Microphone" })).not.toBeChecked();
   });
 
   it("falls back to Settings when the screen-recording prompt changed nothing", async () => {
-    // CoreGraphics cannot say whether it was ever asked, so the app offers the
+    // CoreGraphics cannot say whether it was ever asked, so the app tries the
     // prompt once and learns from the result rather than guessing.
     render(<PermissionsCard />);
     act(() => emitPermissions("granted", "denied", false));
 
-    await userEvent.click(await screen.findByRole("button", { name: /Allow/ }));
+    const toggle = await screen.findByRole("switch", { name: /Screen & System Audio/ });
+    await userEvent.click(toggle);
     act(() => emitPermissions("granted", "denied", false));
 
-    expect(
-      await screen.findByRole("button", { name: /Open Settings/ }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Allow/ })).toBeNull();
+    await userEvent.click(
+      screen.getByRole("switch", { name: /Screen & System Audio/ }),
+    );
+    expect(mockOpen).toHaveBeenCalledWith("screen_recording");
   });
 
   it("offers the prompt for screen recording before anything is known", async () => {
     render(<PermissionsCard />);
     act(() => emitPermissions("granted", "denied", false));
 
-    await userEvent.click(await screen.findByRole("button", { name: /Allow/ }));
+    await userEvent.click(
+      await screen.findByRole("switch", { name: /Screen & System Audio/ }),
+    );
     expect(sidecarSend).toHaveBeenCalledWith({
       cmd: "permissions",
       request: true,

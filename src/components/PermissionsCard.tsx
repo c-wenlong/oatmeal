@@ -11,7 +11,7 @@ import {
   canPrompt,
   capabilities,
   headline,
-  rowAction,
+  toggleAction,
   type PermissionsSnapshot,
 } from "../lib/permissions";
 import type { PrivacyPane } from "../types";
@@ -157,34 +157,33 @@ export function PermissionsCard() {
             <div className="perm" key={cap.pane}>
               <div className="perm-head">
                 <span className="perm-title">{cap.title}</span>
-                {/* The state, said once, where a switch would be. `title` so
-                    the word is still reachable, and an accessible label so it
-                    is not colour alone. */}
-                <span
-                  className={`perm-dot perm-dot--${cap.tone}`}
-                  role="img"
-                  aria-label={`${cap.title}: ${cap.state}`}
-                  title={cap.state}
+                {/* A real switch, and honest in both directions: on asks
+                    macOS, off opens the pane where a grant can be revoked —
+                    no API lets an app take back its own. It is never flipped
+                    optimistically; it shows what macOS last reported, so
+                    cancelling the dialog leaves it where it was. */}
+                <input
+                  type="checkbox"
+                  role="switch"
+                  className="perm-switch"
+                  aria-label={cap.title}
+                  checked={cap.state === "granted"}
+                  disabled={asking === cap.pane}
+                  onChange={() =>
+                    toggleAction(cap, asked.includes(cap.pane)) === "prompt"
+                      ? void ask(cap.pane)
+                      : void openPane(cap.pane)
+                  }
                 />
               </div>
               <p className="perm-reason">{cap.reason}</p>
+              {/* The remedy stays as a sentence, without a second control.
+                  The switch is the action now, and two ways to do one thing on
+                  one row is how a user learns to trust neither. */}
               {cap.remedy && (
-                <div className="row">
-                  <p className="perm-remedy">{cap.remedy}</p>
-                  {/* Ask macOS directly when a prompt can still appear — that
-                      is one click and a dialog, against a trip through System
-                      Settings and a hunt for the right checkbox. Once macOS
-                      has recorded a denial the prompt never returns, and the
-                      request would be a button that silently does nothing, so
-                      there the only honest offer is Settings. */}
-                  {rowAction(cap, asked.includes(cap.pane)) === "prompt" ? (
-                    <button className="primary" onClick={() => ask(cap.pane)}>
-                      {asking === cap.pane ? "Waiting for macOS…" : "Allow…"}
-                    </button>
-                  ) : (
-                    <button onClick={() => openPane(cap.pane)}>Open Settings</button>
-                  )}
-                </div>
+                <p className="perm-remedy">
+                  {asking === cap.pane ? "Waiting for macOS…" : cap.remedy}
+                </p>
               )}
             </div>
           ))}
