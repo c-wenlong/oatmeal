@@ -68,6 +68,11 @@ pub enum SidecarCommand {
     Permissions {
         #[serde(default)]
         request: bool,
+        /// Narrows the prompt to one capability. Absent asks for both, which
+        /// fires two system dialogs back to back — right for a first-run
+        /// "set me up", wrong for a button on one row.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pane: Option<String>,
     },
     /// Start or stop watching which apps hold the microphone (G21).
     WatchMic {
@@ -366,7 +371,13 @@ mod tests {
     fn permissions_command_defaults_to_query_not_prompt() {
         // A bare `{"cmd":"permissions"}` must not pop system dialogs at users.
         let cmd: SidecarCommand = serde_json::from_str(r#"{"cmd":"permissions"}"#).unwrap();
-        assert_eq!(cmd, SidecarCommand::Permissions { request: false });
+        assert_eq!(
+            cmd,
+            SidecarCommand::Permissions {
+                request: false,
+                pane: None
+            }
+        );
     }
 
     #[test]

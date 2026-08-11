@@ -4,6 +4,7 @@ import {
   canPrompt,
   capabilities,
   headline,
+  rowAction,
   type PermissionsSnapshot,
 } from "./permissions";
 
@@ -99,5 +100,34 @@ describe("capabilities", () => {
     expect(undet.promptable).toBe(true);
     expect(denied.promptable).toBe(false);
     expect(denied.tone).toBe("err");
+  });
+});
+
+describe("rowAction", () => {
+  it("asks macOS while a prompt can still appear", () => {
+    expect(rowAction({ pane: "microphone", promptable: true }, false)).toBe("prompt");
+  });
+
+  it("sends a denied microphone to Settings", () => {
+    // macOS never re-shows the prompt, so asking would do nothing visible.
+    expect(rowAction({ pane: "microphone", promptable: false }, false)).toBe(
+      "settings",
+    );
+  });
+
+  it("tries screen recording once, since it cannot say whether it was asked", () => {
+    // CoreGraphics reports only granted/denied. Refusing to prompt would send
+    // a first-run user to System Settings for something one dialog would fix.
+    expect(rowAction({ pane: "screen_recording", promptable: false }, false)).toBe(
+      "prompt",
+    );
+  });
+
+  it("stops offering once the ask changed nothing", () => {
+    // The prompt did not appear, so it never will; Settings is the only route
+    // left and a second Allow would be a button that does nothing.
+    expect(rowAction({ pane: "screen_recording", promptable: false }, true)).toBe(
+      "settings",
+    );
   });
 });

@@ -86,7 +86,25 @@ final class ProtocolTests: XCTestCase {
     func testPermissionsCommandDefaultsToQueryNotPrompt() throws {
         // A bare `{"cmd":"permissions"}` must not pop system dialogs at users.
         let cmd = try WireCodec.decodeCommand(#"{"cmd":"permissions"}"#)
-        XCTAssertEqual(cmd, .permissions(request: false))
+        XCTAssertEqual(cmd, .permissions(request: false, pane: nil))
+    }
+
+    func testPermissionsPaneNarrowsThePrompt() throws {
+        // Without a pane both are asked, which fires two system dialogs one
+        // after the other — wrong for a button sitting on one row.
+        let cmd = try WireCodec.decodeCommand(
+            #"{"cmd":"permissions","request":true,"pane":"microphone"}"#)
+        XCTAssertEqual(cmd, .permissions(request: true, pane: "microphone"))
+    }
+
+    func testPermissionsPaneRoundTrips() throws {
+        // Encoded by the Rust side, decoded here — the pane has to survive the
+        // trip or a row's button silently asks for both permissions.
+        let encoded = try JSONEncoder().encode(
+            SidecarCommand.permissions(request: true, pane: "screen_recording"))
+        XCTAssertEqual(
+            try WireCodec.decodeCommand(String(decoding: encoded, as: UTF8.self)),
+            .permissions(request: true, pane: "screen_recording"))
     }
 
     func testPermissionsEventUsesSnakeCaseKeys() throws {

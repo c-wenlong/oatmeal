@@ -139,6 +139,12 @@ describe("PermissionsCard", () => {
     await waitFor(() => expect(mockOn).toHaveBeenCalled());
     emitPermissions("granted", "denied");
 
+    // Screen Recording is offered the prompt first — CoreGraphics cannot say
+    // whether it was ever asked — and only falls back to Settings once that
+    // has visibly changed nothing.
+    await userEvent.click(await screen.findByRole("button", { name: /Allow/ }));
+    act(() => emitPermissions("granted", "denied"));
+
     await userEvent.click(
       await screen.findByRole("button", { name: /open settings/i }),
     );
@@ -221,5 +227,60 @@ describe("the state is not colour alone", () => {
     expect(
       screen.getByLabelText(/Screen & System Audio Recording: denied/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe("asking macOS from the row", () => {
+  it("prompts for that permission alone, not both", async () => {
+    // Requesting both fires two system dialogs one after the other, which is
+    // startling from a button sitting on one row.
+    render(<PermissionsCard />);
+    act(() => emitPermissions("undetermined", "granted", false));
+
+    await userEvent.click(await screen.findByRole("button", { name: /Allow/ }));
+    expect(sidecarSend).toHaveBeenCalledWith({
+      cmd: "permissions",
+      request: true,
+      pane: "microphone",
+    });
+  });
+
+  it("sends to System Settings once macOS has recorded a denial", async () => {
+    // The prompt never returns after a denial, so Allow would be a button that
+    // silently does nothing.
+    render(<PermissionsCard />);
+    act(() => emitPermissions("denied", "granted", false));
+
+    expect(
+      await screen.findByRole("button", { name: /Open Settings/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Allow/ })).toBeNull();
+  });
+
+  it("falls back to Settings when the screen-recording prompt changed nothing", async () => {
+    // CoreGraphics cannot say whether it was ever asked, so the app offers the
+    // prompt once and learns from the result rather than guessing.
+    render(<PermissionsCard />);
+    act(() => emitPermissions("granted", "denied", false));
+
+    await userEvent.click(await screen.findByRole("button", { name: /Allow/ }));
+    act(() => emitPermissions("granted", "denied", false));
+
+    expect(
+      await screen.findByRole("button", { name: /Open Settings/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Allow/ })).toBeNull();
+  });
+
+  it("offers the prompt for screen recording before anything is known", async () => {
+    render(<PermissionsCard />);
+    act(() => emitPermissions("granted", "denied", false));
+
+    await userEvent.click(await screen.findByRole("button", { name: /Allow/ }));
+    expect(sidecarSend).toHaveBeenCalledWith({
+      cmd: "permissions",
+      request: true,
+      pane: "screen_recording",
+    });
   });
 });

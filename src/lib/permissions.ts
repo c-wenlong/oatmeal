@@ -110,3 +110,26 @@ export function headline(snapshot: PermissionsSnapshot): string {
   if (canPrompt(snapshot)) return "Oatmeal needs permission before it can record.";
   return "Recording is blocked until both permissions are enabled.";
 }
+
+/**
+ * Whether a row should ask macOS, or send the user to System Settings.
+ *
+ * Screen Recording is the awkward one: CoreGraphics has no way to tell
+ * "never asked" from "denied", so it never reports `undetermined` and its
+ * `promptable` is always false once it is not granted. Refusing to prompt on
+ * that basis would send a first-run user to System Settings for a permission a
+ * single dialog would have granted.
+ *
+ * Asking anyway is harmless — when a denial is already recorded the call
+ * returns without showing anything — so it is offered once. If the state has
+ * not moved afterwards, the prompt did not appear and Settings is the only
+ * remaining route.
+ */
+export function rowAction(
+  capability: Pick<CapabilityView, "pane" | "promptable">,
+  alreadyAsked: boolean,
+): "prompt" | "settings" {
+  if (capability.promptable) return "prompt";
+  if (capability.pane === "screen_recording" && !alreadyAsked) return "prompt";
+  return "settings";
+}

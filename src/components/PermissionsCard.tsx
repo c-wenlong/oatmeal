@@ -11,6 +11,7 @@ import {
   canPrompt,
   capabilities,
   headline,
+  rowAction,
   type PermissionsSnapshot,
 } from "../lib/permissions";
 import type { PrivacyPane } from "../types";
@@ -38,6 +39,10 @@ export function headlineTone(
 export function PermissionsCard() {
   const [snapshot, setSnapshot] = useState<PermissionsSnapshot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [asking, setAsking] = useState<PrivacyPane | null>(null);
+  /* Panes macOS has already been asked about in this session. Screen Recording
+     cannot say whether it was ever asked, so the app has to remember. */
+  const [asked, setAsked] = useState<PrivacyPane[]>([]);
   const unlisten = useRef<UnlistenFn | null>(null);
 
   // Seed from the cached snapshot. Without this the card shows "unknown"
@@ -89,6 +94,23 @@ export function PermissionsCard() {
 
   const check = (request: boolean) =>
     guard(() => sidecarSend({ cmd: "permissions", request }));
+
+  /**
+   * Asks macOS for one capability.
+   *
+   * Scoped to the pane, because requesting both fires two system dialogs one
+   * after the other — right for a first-run "set me up", startling from a
+   * button sitting on one row.
+   */
+  const ask = async (pane: PrivacyPane) => {
+    setAsking(pane);
+    try {
+      await guard(() => sidecarSend({ cmd: "permissions", request: true, pane }));
+      setAsked((was) => (was.includes(pane) ? was : [...was, pane]));
+    } finally {
+      setAsking(null);
+    }
+  };
 
   const openPane = (pane: PrivacyPane) => guard(() => openPrivacySettings(pane));
 
@@ -149,7 +171,19 @@ export function PermissionsCard() {
               {cap.remedy && (
                 <div className="row">
                   <p className="perm-remedy">{cap.remedy}</p>
-                  <button onClick={() => openPane(cap.pane)}>Open Settings</button>
+                  {/* Ask macOS directly when a prompt can still appear — that
+                      is one click and a dialog, against a trip through System
+                      Settings and a hunt for the right checkbox. Once macOS
+                      has recorded a denial the prompt never returns, and the
+                      request would be a button that silently does nothing, so
+                      there the only honest offer is Settings. */}
+                  {rowAction(cap, asked.includes(cap.pane)) === "prompt" ? (
+                    <button className="primary" onClick={() => ask(cap.pane)}>
+                      {asking === cap.pane ? "Waiting for macOS…" : "Allow…"}
+                    </button>
+                  ) : (
+                    <button onClick={() => openPane(cap.pane)}>Open Settings</button>
+                  )}
                 </div>
               )}
             </div>

@@ -77,9 +77,21 @@ enum Permissions {
             needsRelaunch: await screenRecordingNeedsRelaunch())
     }
 
-    static func request() async -> SidecarEvent {
-        _ = await requestMicrophone()
-        _ = requestScreenRecording()
+    /// Prompts, and reports where things stand afterwards.
+    ///
+    /// `pane` narrows it to one capability. Asking for both fires two system
+    /// dialogs one after the other, which is right for a first-run "set me up"
+    /// and wrong for a button sitting on one row.
+    static func request(pane: String? = nil) async -> SidecarEvent {
+        switch pane {
+        case "microphone":
+            _ = await requestMicrophone()
+        case "screen_recording":
+            _ = requestScreenRecording()
+        default:
+            _ = await requestMicrophone()
+            _ = requestScreenRecording()
+        }
         return await snapshot()
     }
 }

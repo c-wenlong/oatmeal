@@ -40,7 +40,11 @@ public enum SidecarCommand: Sendable, Equatable {
     case disarm
     /// Reports permission state. With `request: true` it also prompts, which is
     /// only useful while a capability is still `undetermined`.
-    case permissions(request: Bool)
+    ///
+    /// `pane` narrows the prompt to one capability. Without it both are asked,
+    /// which fires two system dialogs back to back — right for a first-run
+    /// "set me up", wrong for a button on one row.
+    case permissions(request: Bool, pane: String?)
     /// Starts or stops watching which apps hold the microphone (G21).
     ///
     /// Off until asked: this polls the audio system every couple of seconds,
@@ -57,6 +61,7 @@ extension SidecarCommand: Codable {
         case meetingId = "meeting_id"
         case sources
         case request
+        case pane
         case enabled
     }
 
@@ -80,7 +85,8 @@ extension SidecarCommand: Codable {
             self = .disarm
         case "permissions":
             self = .permissions(
-                request: try container.decodeIfPresent(Bool.self, forKey: .request) ?? false)
+                request: try container.decodeIfPresent(Bool.self, forKey: .request) ?? false,
+                pane: try container.decodeIfPresent(String.self, forKey: .pane))
         case "watch_mic":
             self = .watchMic(
                 enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true)
@@ -110,9 +116,10 @@ extension SidecarCommand: Codable {
             try container.encode("arm", forKey: .cmd)
         case .disarm:
             try container.encode("disarm", forKey: .cmd)
-        case let .permissions(request):
+        case let .permissions(request, pane):
             try container.encode("permissions", forKey: .cmd)
             try container.encode(request, forKey: .request)
+            try container.encodeIfPresent(pane, forKey: .pane)
         case let .watchMic(enabled):
             try container.encode("watch_mic", forKey: .cmd)
             try container.encode(enabled, forKey: .enabled)

@@ -73,7 +73,7 @@ export type SidecarCommand =
   | { cmd: "ping" }
   | { cmd: "arm" }
   | { cmd: "disarm" }
-  | { cmd: "permissions"; request: boolean };
+  | { cmd: "permissions"; request: boolean; pane?: PrivacyPane };
 
 /** Mirrors `DbSelftest` in src-tauri/src/lib.rs. */
 export interface DbSelftest {

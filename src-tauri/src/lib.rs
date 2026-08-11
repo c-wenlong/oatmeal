@@ -1955,7 +1955,10 @@ fn spawn_sidecar(app: &tauri::AppHandle, autorun_session: bool) -> Result<String
         {
             // Query only — never `request: true` from an automated path, or the
             // harness would fire system dialogs at whoever launched it.
-            let _ = for_callback.send(&sidecar::SidecarCommand::Permissions { request: false });
+            let _ = for_callback.send(&sidecar::SidecarCommand::Permissions {
+                request: false,
+                pane: None,
+            });
             // Arm so the pre-roll is filling by the time the model is ready.
             let _ = for_callback.send(&sidecar::SidecarCommand::Arm);
             let _ = transition(&app_handle, MeetingEvent::Armed);

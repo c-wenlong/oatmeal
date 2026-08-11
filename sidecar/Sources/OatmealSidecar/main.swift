@@ -361,13 +361,15 @@ while let line = readLine(strippingNewline: true) {
             Log.info("Mic watcher stopped.")
         }
 
-    case let .permissions(request):
+    case let .permissions(request, pane):
         // TCC calls can block on a system prompt, so never run them on the
         // command loop — a pending dialog would stall every later command.
         Thread.detachNewThread {
             let semaphore = DispatchSemaphore(value: 0)
             Task {
-                let event = request ? await Permissions.request() : await Permissions.snapshot()
+                let event =
+                    request
+                    ? await Permissions.request(pane: pane) : await Permissions.snapshot()
                 emit(event)
                 semaphore.signal()
             }
