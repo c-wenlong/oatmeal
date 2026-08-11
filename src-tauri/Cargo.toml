@@ -51,6 +51,9 @@ flate2 = "1"
 tar = "0.4"
 # API keys live in the macOS Keychain, never in SQLite.
 keyring = { version = "3", features = ["apple-native"] }
+# For existence checks that do not decrypt. Reading a secret to answer
+# "is one stored" is what makes macOS ask for the keychain password.
+security-framework = "3"
 
 [dev-dependencies]
 # The `test` feature unlocks tauri::test, which drives commands through the real

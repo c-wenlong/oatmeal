@@ -21,6 +21,12 @@ pub trait KeyStore: Send + Sync {
     /// `Ok(None)` when no key was ever stored, which is different from an error.
     fn get(&self, reference: &str) -> Result<Option<String>, KeyError>;
     fn delete(&self, reference: &str) -> Result<(), KeyError>;
+    /// Whether a secret is stored, without reading it.
+    ///
+    /// The default is a full read, which is the honest fallback for a store
+    /// that cannot answer any other way — but on macOS reading decrypts, and
+    /// decrypting is what makes the system ask for the keychain password. The
+    /// real Keychain overrides this. See `Keychain::has`.
     fn has(&self, reference: &str) -> bool {
         matches!(self.get(reference), Ok(Some(_)))
     }
@@ -44,6 +50,34 @@ impl KeyStore for Keychain {
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(KeyError::Backend(e.to_string())),
         }
+    }
+
+    /// Existence, asked without decrypting anything.
+    ///
+    /// This is why the app stopped asking for the keychain password every time
+    /// the Calendar screen opened. `gcal_settings` wants two booleans — is a
+    /// refresh token stored, is a client secret stored — and answering them by
+    /// reading both secrets makes macOS prompt for each, for values the screen
+    /// never displays.
+    ///
+    /// A query for attributes alone needs no decryption and so needs no
+    /// authorisation. Note this reports whether the *item* exists, not whether
+    /// this build may read it: a signature change still prompts on the first
+    /// genuine read, which is correct — that is the ACL doing its job.
+    fn has(&self, reference: &str) -> bool {
+        use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+
+        ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(SERVICE)
+            .account(reference)
+            // Attributes, deliberately not data. Asking for the data is the
+            // whole difference between a silent check and a password prompt.
+            .load_attributes(true)
+            .limit(Limit::Max(1))
+            .search()
+            .map(|found| !found.is_empty())
+            .unwrap_or(false)
     }
 
     fn delete(&self, reference: &str) -> Result<(), KeyError> {
@@ -173,5 +207,35 @@ mod tests {
         // Showing "the last four" of a five-character key reveals most of it.
         assert_eq!(redact("abcd"), "••••");
         assert_eq!(redact(""), "••••");
+    }
+}
+
+#[cfg(test)]
+mod keychain_live {
+    use super::*;
+
+    /// Against the real Keychain: existence without decryption.
+    ///
+    /// `cargo test --lib llm::keys::keychain_live -- --ignored --nocapture`
+    ///
+    /// Not automatic, because it writes to the login keychain and — the first
+    /// time a given build asks — may show the very prompt this exists to
+    /// avoid.
+    #[test]
+    #[ignore = "touches the real login keychain"]
+    fn has_agrees_with_get_without_reading() {
+        let reference = "oatmeal-test-existence";
+        let store = Keychain;
+        let _ = store.delete(reference);
+
+        assert!(
+            !store.has(reference),
+            "reported a secret that was never set"
+        );
+        store.set(reference, "value").expect("set");
+        assert!(store.has(reference), "missed a secret that is stored");
+
+        store.delete(reference).expect("delete");
+        assert!(!store.has(reference), "still reports a deleted secret");
     }
 }
