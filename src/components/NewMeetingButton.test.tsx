@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NewMeetingButton } from "./NewMeetingButton";
-import { meetingCreate } from "../lib/tauri";
+import { meetingStart } from "../lib/tauri";
 
-vi.mock("../lib/tauri", () => ({ meetingCreate: vi.fn() }));
-const mockCreate = vi.mocked(meetingCreate);
+vi.mock("../lib/tauri", () => ({ meetingStart: vi.fn() }));
+const mockCreate = vi.mocked(meetingStart);
 
 beforeEach(() => {
   mockCreate.mockReset();
@@ -19,10 +19,14 @@ describe("NewMeetingButton", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("m-new"));
   });
 
-  it("does not start a recording", async () => {
-    // The whole point of the goal: `+` opens a page, it does not begin a
-    // capture. If this ever routes through meetingStart it needs a microphone
-    // and it lies about what it did.
+  it("starts recording, because that is what the button now means", async () => {
+    // A reversal of G38, asked for after using it: `+` used to open a page
+    // and nothing else, so recording was a second step done late — after the
+    // first minute of the meeting. It now records as it creates.
+    //
+    // The cost is that this needs a working sidecar and microphone, and fails
+    // loudly when there is none. That is the right failure: a note that
+    // silently records nothing is the one worth avoiding.
     render(<NewMeetingButton onCreated={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: /New note/ }));
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());

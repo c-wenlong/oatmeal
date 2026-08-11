@@ -2463,3 +2463,18 @@ input:focus {
   border: 1px solid var(--border);
   border-radius: 8px;
 }
+
+/* The live status: what the recorder is doing, while it does it. */
+.live {
+  margin: 0 0 var(--s-3);
+  font-size: var(--t-small);
+  color: var(--muted);
+  min-height: 1.4em;
+}
+
+/* Words the model actually produced, as opposed to Oatmeal talking about
+   itself. Worth telling apart at a glance. */
+.live--text {
+  color: var(--text);
+  font-style: italic;
+}

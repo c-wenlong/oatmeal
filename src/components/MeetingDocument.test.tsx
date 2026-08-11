@@ -16,6 +16,9 @@ import {
 import type { MeetingSummary } from "../types";
 
 vi.mock("../lib/tauri", () => ({
+  meetingState: vi.fn().mockResolvedValue({ state: "idle" }),
+  onMeetingState: vi.fn().mockResolvedValue(() => {}),
+  onSidecarEvent: vi.fn().mockResolvedValue(() => {}),
   meetingsList: vi.fn(),
   meetingRename: vi.fn(),
   meetingLinks: vi.fn(),

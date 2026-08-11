@@ -22,6 +22,9 @@ export type AudioSource = "mic" | "system";
 /** Mirrors `PermissionState` in src-tauri/src/sidecar/protocol.rs. */
 export type PermissionState = "granted" | "denied" | "undetermined";
 
+/** What `onSidecarEvent` hands back to unsubscribe. */
+export type UnlistenLike = () => void;
+
 /** Mirrors `ModelState` in src-tauri/src/sidecar/protocol.rs. */
 export type ModelState = "downloading" | "loading" | "ready" | "failed";
 

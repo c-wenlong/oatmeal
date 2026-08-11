@@ -167,9 +167,7 @@ describe("DetectionPopup", () => {
     emitQuestion({ bundleId: "com.wisprflow.app", appName: "Wispr Flow" });
 
     expect(await screen.findByTestId("app-question")).toBeInTheDocument();
-    expect(
-      screen.getByText(/Record Wispr Flow calls\?/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Record Wispr Flow calls\?/i)).toBeInTheDocument();
     // The dictation case: it must not have queued an offer.
     expect(screen.queryByRole("button", { name: /start recording/i })).toBeNull();
   });
@@ -302,7 +300,8 @@ describe("the offer window is one shape", () => {
 
     const title = await screen.findByText(/Record Microsoft Teams calls\?/);
     expect(title.textContent!.length).toBeLessThanOrEqual(40);
-    expect(screen.getByText(/Asked once, then remembered/).textContent!.length)
-      .toBeLessThanOrEqual(40);
+    expect(
+      screen.getByText(/Asked once, then remembered/).textContent!.length,
+    ).toBeLessThanOrEqual(40);
   });
 });

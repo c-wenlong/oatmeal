@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { meetingCreate } from "../lib/tauri";
+import { meetingStart } from "../lib/tauri";
 
 /**
  * `+ New note`.
@@ -24,7 +24,13 @@ export function NewMeetingButton({
     setBusy(true);
     setError(null);
     try {
-      onCreated(await meetingCreate());
+      // Starts recording as it creates. Pressing "+ New note" and then
+      // hunting for a record button is two steps for one intention, and the
+      // second one gets done late — after the first minute of the meeting.
+      // `meetingStart` refuses when the sidecar is not up, which is the
+      // failure worth surfacing rather than a note that silently records
+      // nothing.
+      onCreated(await meetingStart());
     } catch (err) {
       setError(String(err));
     } finally {

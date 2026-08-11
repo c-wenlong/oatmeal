@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LiveTranscript } from "./LiveTranscript";
 import {
   meetingDelete,
   meetingLinks,
   meetingRename,
   meetingTranscript,
   meetingsList,
+  meetingState,
+  onMeetingState,
 } from "../lib/tauri";
-import type { MeetingSummary, StoredLink, Utterance } from "../types";
+import type { MeetingState, MeetingSummary, StoredLink, Utterance } from "../types";
 import { meetingTitle } from "./Library";
 import { Notepad } from "./Notepad";
 import { LinkTuner } from "./LinkTuner";
@@ -87,6 +90,26 @@ export function MeetingDocument({
   meetingId: string;
   onBack: () => void;
 }) {
+  /* Whether *this* meeting is the one being recorded. The lifecycle lives in
+     Rust and can change from the tray or from detection, so it is subscribed
+     to rather than assumed from however this screen was opened. */
+  const [recording, setRecording] = useState(false);
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    const apply = (state: MeetingState) =>
+      setRecording(
+        (state.state === "recording" || state.state === "processing") &&
+          state.meeting_id === meetingId,
+      );
+    void meetingState()
+      .then(apply)
+      .catch(() => {});
+    void onMeetingState(apply).then((fn) => {
+      off = fn;
+    });
+    return () => off?.();
+  }, [meetingId]);
+
   const [meeting, setMeeting] = useState<MeetingSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -141,6 +164,10 @@ export function MeetingDocument({
 
   return (
     <article className="document" data-testid="meeting-document">
+      {/* What the recorder is doing, while it does it. Without this the first
+          twelve seconds of a cold start are silent and indistinguishable from
+          a broken app. */}
+      <LiveTranscript recording={recording} />
       <div className="document-head">
         <button className="document-back" onClick={onBack}>
           ‹ Meetings
