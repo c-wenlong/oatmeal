@@ -23,7 +23,7 @@ function panel(id: string, content: PanelContent, generatedAt = 1_000): Panel {
     templateId: "default",
     contentJson: JSON.stringify(content),
     provider: "Ollama",
-    model: "llama3.2",
+    model: "gemma4:e2b",
     generatedAt,
   };
 }
@@ -175,7 +175,7 @@ describe("PanelView", () => {
     // Provenance moved into the template pill's menu: still one click away,
     // no longer printed under every summary in the document.
     await userEvent.click(await screen.findByLabelText("template"));
-    expect(await screen.findByText(/Ollama.*llama3\.2/)).toBeInTheDocument();
+    expect(await screen.findByText(/Ollama.*gemma4:e2b/)).toBeInTheDocument();
   });
 
   it("surfaces a generation failure instead of an empty summary", async () => {

@@ -58,7 +58,12 @@ impl ProviderKind {
             ProviderKind::Anthropic => "claude-sonnet-5",
             ProviderKind::Openai => "gpt-5",
             ProviderKind::Openrouter => "anthropic/claude-sonnet-5",
-            ProviderKind::Ollama => "llama3.2",
+            // Measured against ten real meetings — see docs/perf.md. It cited
+            // every bullet of every summary, at 1.7 GB resident and roughly
+            // half the latency of the 9.5 GB `gemma4:latest`, which cited no
+            // better. The previous default, `llama3.2`, was never measured
+            // here and is not a model this project has evidence for.
+            ProviderKind::Ollama => "gemma4:e2b",
             ProviderKind::Lmstudio => "local-model",
             ProviderKind::Bundled => "local",
         }
@@ -322,6 +327,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_local_default_is_the_model_we_measured() {
+        // Changing this is a claim about quality, so it should fail loudly and
+        // send whoever changed it to docs/perf.md for the evidence.
+        assert_eq!(
+            ProviderConfig::preset(ProviderKind::Ollama).model,
+            "gemma4:e2b"
+        );
+    }
+
+    #[test]
     fn a_short_prompt_keeps_the_default_window() {
         // Asking for the maximum every time allocates a KV cache measured in
         // gigabytes to summarise a two-minute standup.
@@ -505,6 +520,38 @@ mod tests {
 #[cfg(test)]
 mod live {
     use super::*;
+
+    /// The shipped default, against a running Ollama, with nothing overridden.
+    ///
+    /// `cargo test --lib llm::provider::live -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "needs a running Ollama"]
+    async fn the_default_local_provider_answers_out_of_the_box() {
+        // No model override, no base-url edit: exactly what a new install has.
+        let config = ProviderConfig::preset(ProviderKind::Ollama);
+        let request = ChatRequest::new(vec![Message::user(
+            "Reply with the single word: ready".to_string(),
+        )]);
+        let response: serde_json::Value = reqwest::Client::new()
+            .post(config.chat_url())
+            .json(&build_body(&config, &request))
+            .send()
+            .await
+            .expect("ollama unreachable")
+            .json()
+            .await
+            .expect("json");
+        // A model that is not pulled comes back as an error object, not a
+        // message — which is exactly the failure a new user would hit.
+        assert!(
+            response.get("error").is_none(),
+            "default model {} is not usable: {response}",
+            config.model
+        );
+        let text = extract_text(ProviderKind::Ollama, &response).expect("content");
+        eprintln!("model={} reply={}", config.model, text.trim());
+        assert!(text.to_lowercase().contains("ready"), "unexpected: {text}");
+    }
 
     /// The 42-minute meeting, end to end against a running Ollama.
     ///

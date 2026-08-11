@@ -143,8 +143,14 @@ nothing re-tested it.
 - **Summarisation is where the user waits.** 19–111 s against 19 s to
   transcribe. Model size costs 2–3× wall for no gain in citation rate on this
   corpus.
-- **`gemma4:e2b` is enough.** It cited every bullet on every meeting, at a third
-  the memory and half the latency of the 9.5 GB model.
+- **`gemma4:e2b` is enough, and is now the default.** It cited every bullet on
+  every meeting, at a third the memory and half the latency of the 9.5 GB model.
+  The previous default was `llama3.2` — never measured for this project, and not
+  pulled on the machine these numbers came from, so out of the box the local
+  path could not answer at all. Two live tests now cover it:
+  `the_default_local_provider_answers_out_of_the_box` and
+  `a_long_meeting_is_not_silently_truncated`, both under
+  `cargo test --lib llm::provider::live -- --ignored`.
 
 ### Caveats
 
