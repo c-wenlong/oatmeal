@@ -17,6 +17,7 @@ import { LinkTuner } from "./LinkTuner";
 import { LinkedMoment } from "./LinkedMoment";
 import { OverflowMenu } from "./OverflowMenu";
 import { PanelView } from "./PanelView";
+import { TranscriptView } from "./TranscriptView";
 
 /**
  * A meeting, as a document.
@@ -135,6 +136,7 @@ export function MeetingDocument({
   const [utterances, setUtterances] = useState<Utterance[]>([]);
   const [hovered, setHovered] = useState<string | null>(null);
   const [tuning, setTuning] = useState(false);
+  const [view, setView] = useState<"summary" | "transcript">("summary");
   const titleRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
@@ -246,7 +248,34 @@ export function MeetingDocument({
         ))}
       </div>
 
-      <PanelView meetingId={meetingId} onCitationClick={() => {}} />
+      {/* Two views of the same meeting. The transcript is what the summary is
+          answerable to, and until now the app fetched it and never showed it —
+          so a summary that dropped most of a meeting looked exactly like one
+          that did not. */}
+      <div className="doc-tabs" role="tablist">
+        <button
+          role="tab"
+          aria-selected={view === "summary"}
+          className={view === "summary" ? "doc-tab doc-tab--on" : "doc-tab"}
+          onClick={() => setView("summary")}
+        >
+          Summary
+        </button>
+        <button
+          role="tab"
+          aria-selected={view === "transcript"}
+          className={view === "transcript" ? "doc-tab doc-tab--on" : "doc-tab"}
+          onClick={() => setView("transcript")}
+        >
+          Transcript{utterances.length > 0 ? ` · ${utterances.length}` : ""}
+        </button>
+      </div>
+
+      {view === "summary" ? (
+        <PanelView meetingId={meetingId} onCitationClick={() => {}} />
+      ) : (
+        <TranscriptView utterances={utterances} />
+      )}
 
       <div className="document-canvas">
         <Notepad

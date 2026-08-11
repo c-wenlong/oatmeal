@@ -159,12 +159,21 @@ describe("MeetingDocument", () => {
     expect(screen.getByTestId("panels")).toBeInTheDocument();
   });
 
-  it("shows no transcript pane", async () => {
-    // G35 brings the transcript back as a hover affordance. Shipping the pane
-    // now would mean building the exact thing that goal exists to remove.
+  it("offers the transcript beside the summary", async () => {
+    // Reverses G33, which hid it deliberately. The transcript is what the
+    // summary is answerable to, and the app fetched it and never showed it —
+    // so a summary that dropped most of a meeting looked exactly like one
+    // that did not. Asked for after a two-bullet summary of a 264-line call.
     render(<MeetingDocument meetingId="m1" onBack={() => {}} />);
     await screen.findByTestId("meeting-document");
-    expect(screen.queryByText(/transcript/i)).toBeNull();
+
+    const tab = screen.getByRole("tab", { name: /Transcript/ });
+    expect(screen.getByRole("tab", { name: /Summary/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.click(tab);
+    expect(tab).toHaveAttribute("aria-selected", "true");
   });
 
   it("goes back to the library", async () => {

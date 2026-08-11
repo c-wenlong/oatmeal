@@ -2490,3 +2490,73 @@ input:focus {
   color: var(--text);
   font-style: italic;
 }
+
+/* Summary and transcript, side by side as tabs rather than one buried. */
+.doc-tabs {
+  display: flex;
+  gap: var(--s-1);
+  margin: var(--s-5) 0 var(--s-4);
+}
+
+.doc-tab {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--t-small);
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+}
+
+.doc-tab:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.doc-tab--on,
+.doc-tab--on:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* Time, speaker, words. A fixed first column so the text starts in the same
+   place on every line and the eye can run down it. */
+.transcript-line {
+  display: grid;
+  grid-template-columns: 3.2rem 3rem 1fr;
+  gap: var(--s-3);
+  align-items: baseline;
+  font-size: var(--t-small);
+  line-height: 1.6;
+}
+
+.transcript-time {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: var(--t-micro);
+  font-family: var(--mono);
+  color: var(--muted);
+  text-align: right;
+}
+
+.transcript-who {
+  color: var(--muted);
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.transcript-line--mic .transcript-who {
+  color: var(--accent);
+}
+
+.transcript-text {
+  color: var(--text);
+}
