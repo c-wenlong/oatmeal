@@ -168,7 +168,7 @@ describe("DetectionPopup", () => {
 
     expect(await screen.findByTestId("app-question")).toBeInTheDocument();
     expect(
-      screen.getByText(/Record when Wispr Flow uses the mic/i),
+      screen.getByText(/Record Wispr Flow calls\?/i),
     ).toBeInTheDocument();
     // The dictation case: it must not have queued an offer.
     expect(screen.queryByRole("button", { name: /start recording/i })).toBeNull();
@@ -273,5 +273,36 @@ describe("joining", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Start recording/ }));
     await waitFor(() => expect(detectionJoin).toHaveBeenCalledWith("c1", null));
+  });
+});
+
+describe("the offer window is one shape", () => {
+  it("makes both branches draggable, and neither button a handle", async () => {
+    // The question branch shipped without a drag region and without the pill
+    // layout, so it was unmovable and its text was cut to "Record whe…".
+    mockPending.mockResolvedValue({ bundleId: "us.zoom.xos", appName: "Zoom" });
+    render(<DetectionPopup />);
+
+    const pill = await screen.findByTestId("app-question");
+    expect(pill).toHaveAttribute("data-tauri-drag-region");
+    for (const button of screen.getAllByRole("button")) {
+      expect(button).not.toHaveAttribute("data-tauri-drag-region");
+    }
+  });
+
+  it("keeps both branches to one short line each", async () => {
+    // jsdom cannot measure overflow, so this guards the input to it: the pill
+    // is 520px with two buttons, which leaves room for a title of roughly this
+    // length. The real check is the browser one — see docs/ui-checks.md.
+    mockPending.mockResolvedValue({
+      bundleId: "com.microsoft.teams2",
+      appName: "Microsoft Teams",
+    });
+    render(<DetectionPopup />);
+
+    const title = await screen.findByText(/Record Microsoft Teams calls\?/);
+    expect(title.textContent!.length).toBeLessThanOrEqual(40);
+    expect(screen.getByText(/Asked once, then remembered/).textContent!.length)
+      .toBeLessThanOrEqual(40);
   });
 });

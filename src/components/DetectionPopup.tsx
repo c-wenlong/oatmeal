@@ -116,12 +116,21 @@ export function DetectionPopup() {
   // ask, and answering it decides whether an offer should even exist.
   if (question) {
     const name = question.appName ?? question.bundleId;
+    /* The same pill as the offer, and for the same reasons: it is the same
+       window. Written as one row rather than a stacked title and paragraph,
+       because 72px of pill truncates the second line — which is how this
+       shipped, saying "Record whe…" over "Asked once. Oatmeal will r…". */
     return (
-      <div className="popup" data-testid="app-question">
-        <p className="popup-title">Record when {name} uses the mic?</p>
-        <p className="popup-reason">
-          Asked once. Oatmeal will remember your answer and never ask again.
-        </p>
+      <div className="popup" data-tauri-drag-region data-testid="app-question">
+        <span className="popup-dot" aria-hidden="true" />
+        <div className="popup-body" data-tauri-drag-region>
+          <p className="popup-title" data-tauri-drag-region>
+            Record {name} calls?
+          </p>
+          <p className="popup-reason" data-tauri-drag-region>
+            Asked once, then remembered
+          </p>
+        </div>
         <div className="popup-actions">
           <button
             className="primary"
@@ -130,7 +139,11 @@ export function DetectionPopup() {
           >
             Always
           </button>
-          <button disabled={busy} onClick={() => void answerApp(false)}>
+          <button
+            className="popup-never"
+            disabled={busy}
+            onClick={() => void answerApp(false)}
+          >
             Never
           </button>
         </div>

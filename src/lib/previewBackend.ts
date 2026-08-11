@@ -220,6 +220,24 @@ function handlers(): Record<string, (a?: Record<string, unknown>) => unknown> {
       s.detection = arg<DetectionSettings>(a, "settings");
     },
     detection_rules_list: () => [],
+    // The offer window, so its layout can be checked at the size it actually
+    // renders at. jsdom cannot measure overflow; a browser can.
+    detection_candidates: () => [
+      {
+        id: "c1",
+        source: "calendar",
+        title: "Design review with the platform team",
+        bundleId: null,
+        appName: null,
+        calendarEventId: "e1",
+        joinUrl: "https://meet.google.com/abc-defg-hij",
+        atMs: 0,
+      },
+    ],
+    detection_pending_question: () =>
+      new URLSearchParams(globalThis.location?.search ?? "").get("popup") === "question"
+        ? { bundleId: "com.microsoft.teams2", appName: "Microsoft Teams" }
+        : null,
     detection_pending: () => [],
 
     calendar_sources: () => s.calendars,

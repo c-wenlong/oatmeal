@@ -1518,7 +1518,7 @@ fn offer_candidate(app: &tauri::AppHandle, candidate: detect::Candidate) {
 }
 
 /// How big the offer is. A pill, not a dialog.
-pub const POPUP_SIZE: (f64, f64) = (460.0, 72.0);
+pub const POPUP_SIZE: (f64, f64) = (520.0, 72.0);
 
 /// How far below the top of the screen it sits.
 ///
