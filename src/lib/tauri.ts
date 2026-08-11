@@ -41,6 +41,7 @@ import type {
   UpdateStatus,
   CalendarSource,
   CalendarAccess,
+  ModelAvailability,
 } from "../types";
 import type { PermissionsSnapshot } from "./permissions";
 
@@ -209,6 +210,21 @@ export function providerSelect(
 /** Stores a key in the Keychain. It is never read back into the frontend. */
 export function providerSetKey(kind: ProviderKind, key: string): Promise<void> {
   return invoke<void>("provider_set_key", { kind, key });
+}
+
+/**
+ * Whether the chosen local model is installed.
+ *
+ * Only Ollama can answer; everything else reports installed rather than
+ * inventing a state it cannot check.
+ */
+export function providerModelAvailable(): Promise<ModelAvailability> {
+  return invoke<ModelAvailability>("provider_model_available");
+}
+
+/** Pulls the chosen model. Progress arrives via `onDownloadProgress`. */
+export function providerPullModel(): Promise<void> {
+  return invoke<void>("provider_pull_model");
 }
 
 export function providerTest(): Promise<string> {

@@ -2170,6 +2170,94 @@ fn provider_current(state: tauri::State<'_, AppState>) -> Result<ProviderConfig,
     Ok(state.provider.lock().map_err(|_| "lock poisoned")?.clone())
 }
 
+/// Whether the chosen local model is actually installed.
+///
+/// Only Ollama can answer this — LM Studio has no registry to ask and the
+/// bundled runtime has its own model picker — so everything else reports
+/// installed rather than inventing a state it cannot check.
+#[tauri::command]
+async fn provider_model_available(
+    app: tauri::AppHandle,
+) -> Result<llm::ollama::ModelAvailability, String> {
+    let (kind, base_url, model, http) = {
+        let state = app.state::<AppState>();
+        let config = state.provider.lock().map_err(|_| "lock poisoned")?.clone();
+        (
+            config.kind,
+            config.base_url,
+            config.model,
+            state.http.clone(),
+        )
+    };
+    if kind != llm::provider::ProviderKind::Ollama {
+        return Ok(llm::ollama::ModelAvailability::Installed { model });
+    }
+
+    let response = http
+        .get(llm::ollama::tags_url(&base_url))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await;
+    let body = match response {
+        // Not running is a different problem from not installed, and the user
+        // fixes them in different places.
+        Err(err) => {
+            return Ok(llm::ollama::ModelAvailability::Unreachable {
+                detail: format!("could not reach Ollama at {base_url}: {err}"),
+            })
+        }
+        Ok(response) => response.text().await.map_err(|e| e.to_string())?,
+    };
+    Ok(llm::ollama::availability_from(&model, &body))
+}
+
+/// Pulls the chosen model. Progress arrives on `runtime://download`, the same
+/// channel the bundled runtime uses, so the UI has one progress renderer.
+#[tauri::command]
+async fn provider_pull_model(app: tauri::AppHandle) -> Result<(), String> {
+    use futures_util::StreamExt;
+
+    let (base_url, model, http) = {
+        let state = app.state::<AppState>();
+        let config = state.provider.lock().map_err(|_| "lock poisoned")?.clone();
+        (config.base_url, config.model, state.http.clone())
+    };
+
+    let response = http
+        .post(llm::ollama::pull_url(&base_url))
+        .json(&serde_json::json!({ "model": model, "stream": true }))
+        .send()
+        .await
+        .map_err(|e| format!("could not reach Ollama at {base_url}: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Ollama refused the pull: {}", response.status()));
+    }
+
+    // Streamed line by line: a multi-gigabyte pull with no progress is
+    // indistinguishable from a hang, and this is the one place the user is
+    // asked to wait without anything to look at.
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(newline) = buffer.find('\n') {
+            let line: String = buffer.drain(..=newline).collect();
+            let Ok(parsed) = serde_json::from_str::<llm::ollama::PullLine>(line.trim()) else {
+                continue;
+            };
+            if let Some(error) = parsed.error {
+                return Err(error);
+            }
+            let _ = app.emit(
+                "runtime://download",
+                &llm::ollama::progress_from(&parsed, &model),
+            );
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn provider_select(
     kind: ProviderKind,
@@ -2863,6 +2951,8 @@ pub fn run() {
             meeting_delete,
             providers_list,
             provider_current,
+            provider_model_available,
+            provider_pull_model,
             provider_select,
             provider_set_key,
             provider_test,

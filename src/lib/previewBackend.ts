@@ -4,6 +4,7 @@ import type {
   FlowOutcome,
   GcalSettings,
   MeetingSummary,
+  ProviderConfig,
   UpdateStatus,
 } from "../types";
 
@@ -61,6 +62,7 @@ export function scenarioFrom(search: string): Scenario {
 
 interface Store {
   detection: DetectionSettings;
+  provider: ProviderConfig;
   gcal: GcalSettings;
   calendars: CalendarSource[];
   meetings: MeetingSummary[];
@@ -72,6 +74,13 @@ const DAY = 86_400_000;
 
 function baseStore(now: number): Store {
   return {
+    provider: {
+      id: "ollama",
+      kind: "ollama",
+      baseUrl: "http://localhost:11434",
+      model: "gemma4:e2b",
+      keychainRef: null,
+    },
     detection: {
       leadMs: 90_000,
       micEnabled: true,
@@ -259,15 +268,18 @@ function handlers(): Record<string, (a?: Record<string, unknown>) => unknown> {
       },
     ],
     runtime_state: () => ({ state: "ready" }),
+    // Missing by default so the preview shows the interesting state: the one
+    // where the user has to do something. Mirrors the Rust rule that only
+    // Ollama can answer — a preview that shows this note under a provider the
+    // app never checks teaches the wrong thing about the app.
+    provider_model_available: () =>
+      s.provider.kind === "ollama"
+        ? { state: "missing", model: s.provider.model }
+        : { state: "installed", model: s.provider.model },
+    provider_pull_model: () => undefined,
     runtime_model_status: () => [],
     runtime_models: () => [],
-    provider_current: () => ({
-      id: "bundled",
-      kind: "bundled",
-      baseUrl: "http://127.0.0.1:8080",
-      model: "gemma",
-      keychainRef: null,
-    }),
+    provider_current: () => s.provider,
     notion_settings: () => ({ hasToken: false, databaseId: null, autoExport: false }),
     privacy_snapshot: () => ({
       telemetry: false,

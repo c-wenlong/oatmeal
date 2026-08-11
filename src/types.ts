@@ -426,6 +426,13 @@ export interface ExportResult {
   blocks: number;
 }
 
+/** Mirrors `ModelAvailability` in src-tauri/src/llm/ollama.rs. */
+export type ModelAvailability =
+  /** Nothing is listening — Ollama is not installed, or not started. */
+  | { state: "unreachable"; detail: string }
+  | { state: "missing"; model: string }
+  | { state: "installed"; model: string };
+
 /** Mirrors `CalendarAccess` in src-tauri/src/lib.rs. */
 export interface CalendarAccess {
   authorized: boolean;

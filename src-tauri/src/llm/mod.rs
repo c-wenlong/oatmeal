@@ -11,6 +11,7 @@ pub mod anthropic;
 pub mod bundled;
 pub mod download;
 pub mod keys;
+pub mod ollama;
 pub mod provider;
 
 use std::time::Duration;
