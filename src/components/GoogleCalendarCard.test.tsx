@@ -115,15 +115,23 @@ describe("GoogleCalendarCard", () => {
     ).toBeInTheDocument();
   });
 
-  it("says the secret is required, and where it goes", async () => {
-    // This card used to say the opposite. Google requires client_secret for
-    // Desktop app clients whether or not PKCE is used, and the promise that it
-    // was unnecessary made the Connect button impossible to succeed at.
+  it("says where the secret goes, and offers the guide", async () => {
+    // The card says the short version; why Google needs a secret at all, when
+    // PKCE is in use, is now step 5 of the guide — a dozen console clicks is
+    // not a settings row.
+    const onOpenGuide = vi.fn();
+    render(<GoogleCalendarCard onOpenGuide={onOpenGuide} />);
+    expect(await screen.findByText(/goes to your Keychain/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /How do I get one/i }));
+    expect(onOpenGuide).toHaveBeenCalled();
+  });
+
+  it("does not offer a guide nobody wired up", async () => {
+    // A link to nowhere is worse than no link.
     render(<GoogleCalendarCard />);
-    expect(
-      await screen.findByText(/Google requires the secret here/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/goes to your Keychain/i)).toBeInTheDocument();
+    await screen.findByText(/goes to your Keychain/i);
+    expect(screen.queryByRole("button", { name: /How do I get one/i })).toBeNull();
   });
 
   it("warns when an id was pasted into the secret field", async () => {
@@ -163,7 +171,7 @@ describe("GoogleCalendarCard", () => {
     render(<GoogleCalendarCard />);
 
     expect(
-      await screen.findByRole("button", { name: /connect google calendar/i }),
+      await screen.findByRole("switch", { name: /Google Calendar connected/i }),
     ).toBeDisabled();
     expect(screen.getByText(/Save the client secret first/)).toBeInTheDocument();
   });
@@ -194,7 +202,7 @@ describe("GoogleCalendarCard", () => {
     render(<GoogleCalendarCard />);
 
     expect(
-      await screen.findByRole("button", { name: /connect google calendar/i }),
+      await screen.findByRole("switch", { name: /Google Calendar connected/i }),
     ).toBeDisabled();
     expect(screen.getByText(/Save the client id first/)).toBeInTheDocument();
   });
@@ -202,7 +210,7 @@ describe("GoogleCalendarCard", () => {
   it("runs the flow and reports success", async () => {
     render(<GoogleCalendarCard />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /connect google calendar/i }),
+      await screen.findByRole("switch", { name: /Google Calendar connected/i }),
     );
 
     await waitFor(() => expect(mockConnect).toHaveBeenCalled());
@@ -214,7 +222,7 @@ describe("GoogleCalendarCard", () => {
     render(<GoogleCalendarCard />);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /connect google calendar/i }),
+      await screen.findByRole("switch", { name: /Google Calendar connected/i }),
     );
     expect(await screen.findByText(/You declined access/)).toBeInTheDocument();
   });
@@ -223,7 +231,7 @@ describe("GoogleCalendarCard", () => {
     // Switching the source on before there is a token would do nothing and
     // look broken.
     render(<GoogleCalendarCard />);
-    await screen.findByRole("button", { name: /connect google calendar/i });
+    await screen.findByRole("switch", { name: /Google Calendar connected/i });
     expect(screen.queryByLabelText(/use google calendar for detection/i)).toBeNull();
   });
 
@@ -234,7 +242,7 @@ describe("GoogleCalendarCard", () => {
     mockGet.mockResolvedValue(settings({ connected: true }));
     render(<GoogleCalendarCard />);
 
-    await screen.findByRole("button", { name: /disconnect/i });
+    await screen.findByRole("switch", { name: /Google Calendar connected/i });
     expect(screen.queryByLabelText(/use google calendar for detection/i)).toBeNull();
   });
 
@@ -242,7 +250,9 @@ describe("GoogleCalendarCard", () => {
     mockGet.mockResolvedValue(settings({ connected: true }));
     render(<GoogleCalendarCard />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /disconnect/i }));
+    fireEvent.click(
+      await screen.findByRole("switch", { name: /Google Calendar connected/i }),
+    );
     await waitFor(() => expect(mockDisconnect).toHaveBeenCalled());
     expect(await screen.findByText(/token was deleted/i)).toBeInTheDocument();
   });

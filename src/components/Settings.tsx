@@ -3,6 +3,7 @@ import { DetectionSettingsPanel } from "./DetectionSettings";
 import { detectionSettings, gcalSettings } from "../lib/tauri";
 import { CalendarPane } from "./CalendarPane";
 import { GoogleCalendarCard } from "./GoogleCalendarCard";
+import { GoogleSetupGuide } from "./GoogleSetupGuide";
 import { NotionCard } from "./NotionCard";
 import { PermissionsCard } from "./PermissionsCard";
 import { PrivacyCard } from "./PrivacyCard";
@@ -65,7 +66,9 @@ export function Settings({ onBack }: { onBack: () => void }) {
   } | null>(null);
   const [gcal, setGcal] = useState<GcalSettings | null>(null);
   const [pane, setPane] = useState<PaneId>("capture");
-  const [detail, setDetail] = useState<"detection" | "google" | null>(null);
+  const [detail, setDetail] = useState<"detection" | "google" | "google-guide" | null>(
+    null,
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -102,7 +105,12 @@ export function Settings({ onBack }: { onBack: () => void }) {
     <div className="settings-shell" data-testid="settings">
       <SettingsNav current={pane} onSelect={select} onBack={onBack} />
       <div className="settings">
-        {detail === "google" ? (
+        {detail === "google-guide" ? (
+          /* Back to the Google screen, not out to Calendar: the guide is read
+             while setting that screen up, and landing a level higher would
+             lose the place. */
+          <GoogleSetupGuide onBack={() => setDetail("google")} />
+        ) : detail === "google" ? (
           <div data-testid="settings-google">
             <button className="document-back" onClick={() => setDetail(null)}>
               ‹ Calendar
@@ -110,7 +118,7 @@ export function Settings({ onBack }: { onBack: () => void }) {
             <h1 className="library-title settings-title">Google Calendar</h1>
             <div className="settings-group">
               <SettingsRow icon="share">
-                <GoogleCalendarCard />
+                <GoogleCalendarCard onOpenGuide={() => setDetail("google-guide")} />
               </SettingsRow>
             </div>
           </div>

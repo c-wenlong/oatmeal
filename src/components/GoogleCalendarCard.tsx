@@ -80,7 +80,7 @@ export function connectMessage(connected: boolean, reason: string | null): strin
  * `invalid_request: client_secret is missing.` PKCE is still what does the real
  * work, since a secret shipped in a desktop binary protects nothing.
  */
-export function GoogleCalendarCard() {
+export function GoogleCalendarCard({ onOpenGuide }: { onOpenGuide?: () => void } = {}) {
   const [settings, setSettings] = useState<GcalSettings | null>(null);
   const [clientId, setClientId] = useState("");
   /* Never seeded from settings — the secret is write-only. What comes back is
@@ -158,7 +158,20 @@ export function GoogleCalendarCard() {
     <section className="card" data-testid="gcal-card">
       <div className="card-head">
         <h2>Google Calendar</h2>
-        {settings.connected && <span className="pill pill--ok">connected</span>}
+        {/* The switch *is* the connection. Unlike a macOS permission, the app
+            genuinely owns both directions here: on runs the OAuth flow, off
+            deletes the stored token. Disabled until both halves of the
+            credential are saved, because Connect would fail at the token
+            exchange — after consent, which is the worst place to find out. */}
+        <input
+          type="checkbox"
+          role="switch"
+          className="perm-switch"
+          aria-label="Google Calendar connected"
+          checked={settings.connected}
+          disabled={busy || (!settings.connected && !ready)}
+          onChange={() => (settings.connected ? void disconnect() : void connect())}
+        />
       </div>
       <p className="card-note">
         Only needed if your calendar is <em>not</em> in the macOS Calendar app — Oatmeal
@@ -202,25 +215,21 @@ export function GoogleCalendarCard() {
       )}
 
       <p className="empty-note">
-        Create a <strong>Desktop app</strong> OAuth client in Google Cloud Console and
-        paste both halves. Google requires the secret here even though PKCE is in use;
-        it goes to your Keychain, never to a file, and is never shown again.
-      </p>
-
-      <div className="row">
-        {settings.connected ? (
-          <button onClick={() => void disconnect()}>Disconnect</button>
-        ) : (
-          <button
-            className="primary"
-            disabled={busy || !ready}
-            onClick={() => void connect()}
-          >
-            {busy ? "Waiting for browser…" : "Connect Google Calendar"}
+        Both halves come from a <strong>Desktop app</strong> OAuth client. The secret
+        goes to your Keychain, never to a file, and is never shown again.{" "}
+        {onOpenGuide && (
+          <button className="link-button" onClick={onOpenGuide}>
+            How do I get one?
           </button>
         )}
-        {!ready && <span className="empty-note">{missingHalf(settings)}</span>}
-      </div>
+      </p>
+
+      {/* No Connect button: the switch at the top is the control, and two ways
+          to do one thing on one card is how a user learns to trust neither.
+          What stays is the reason the switch is disabled — a control that
+          refuses to move without saying why is just broken. */}
+      {!ready && <p className="empty-note">{missingHalf(settings)}</p>}
+      {busy && <p className="empty-note">Waiting for your browser…</p>}
 
       {/* The "use these events" switch lives in Visible calendars now, with the
           other calendars. Two controls for one setting is how a user learns not

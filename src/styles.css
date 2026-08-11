@@ -2401,3 +2401,65 @@ input:focus {
   font-size: 1rem;
   line-height: 1;
 }
+
+/* ============================================================ setup guide
+   A dozen clicks across a console most people have never opened. Numbered,
+   one action per step, with room for a screenshot under each — a guide that
+   is useful before any picture exists and better as they are added. */
+.guide-intro {
+  max-width: 62ch;
+}
+
+.guide {
+  list-style: none;
+  margin: var(--s-5) 0 0;
+  padding: 0;
+  counter-reset: guide;
+}
+
+.guide-step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s-4);
+  padding: var(--s-4) 0;
+}
+
+.guide-step + .guide-step {
+  border-top: 1px dashed var(--border);
+}
+
+.guide-number {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--t-small);
+  flex: none;
+}
+
+.guide-title {
+  font-size: var(--t-body);
+  font-weight: 500;
+  margin: 0 0 var(--s-1);
+}
+
+.guide-text {
+  color: var(--muted);
+  font-size: var(--t-small);
+  line-height: 1.6;
+  margin: 0;
+  max-width: 62ch;
+}
+
+/* Bounded, so a full-resolution screenshot does not set the page width. */
+.guide-shot {
+  display: block;
+  max-width: 100%;
+  margin-top: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
