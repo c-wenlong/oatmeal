@@ -15,6 +15,7 @@
 //! the security: a secret that ships in a desktop binary can be read out of it
 //! with `strings`, and the verifier cannot.
 
+pub mod calendars;
 pub mod connection;
 pub mod events;
 pub mod loopback;

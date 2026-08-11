@@ -115,17 +115,64 @@ impl Connection {
         Ok(())
     }
 
-    /// Upcoming meeting-shaped events, ready for the detection queue.
-    pub async fn upcoming(
+    /// Every calendar in the connected account.
+    ///
+    /// Needs the `calendar.calendarlist.readonly` scope. A grant issued before
+    /// that scope existed comes back 403, which is the signal to reconnect
+    /// rather than a transport failure — so it is reported as its own error.
+    pub async fn calendars(
         &self,
         http: &reqwest::Client,
         keys: &dyn KeyStore,
         client_id: &str,
         now_ms: i64,
+    ) -> Result<Vec<super::calendars::GoogleCalendar>, TokenError> {
+        let access = self.access_token(http, keys, client_id, now_ms).await?;
+        let response = http
+            .get(super::calendars::CALENDAR_LIST_ENDPOINT)
+            .bearer_auth(access)
+            .send()
+            .await
+            .map_err(|e| TokenError::Unreachable(e.to_string()))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| TokenError::Unreachable(e.to_string()))?;
+        if status == reqwest::StatusCode::FORBIDDEN {
+            return Err(TokenError::NeedsReauth);
+        }
+        if !status.is_success() {
+            return Err(TokenError::Rejected(body.chars().take(200).collect()));
+        }
+        super::calendars::parse(&body).map_err(|e| TokenError::Malformed(e.to_string()))
+    }
+
+    /// Upcoming meeting-shaped events, ready for the detection queue.
+    /// Across every calendar named, merged.
+    ///
+    /// One request per calendar, because the API has no multi-calendar read.
+    /// A calendar that fails is skipped rather than failing the sweep: one
+    /// unshared calendar should not cost the user every other meeting.
+    pub async fn upcoming(
+        &self,
+        http: &reqwest::Client,
+        keys: &dyn KeyStore,
+        client_id: &str,
+        calendar_ids: &[String],
+        now_ms: i64,
         horizon_ms: i64,
     ) -> Result<Vec<CalendarEvent>, TokenError> {
         let access = self.access_token(http, keys, client_id, now_ms).await?;
-        events::upcoming(http, &access, now_ms, horizon_ms).await
+        let mut all = Vec::new();
+        for calendar_id in calendar_ids {
+            match events::upcoming(http, &access, calendar_id, now_ms, horizon_ms).await {
+                Ok(events) => all.extend(events),
+                Err(err) => eprintln!("calendar {calendar_id} could not be read: {err}"),
+            }
+        }
+        Ok(all)
     }
 }
 

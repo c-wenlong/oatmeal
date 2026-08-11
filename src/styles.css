@@ -2159,6 +2159,12 @@ input:focus {
   gap: var(--s-3);
 }
 
+/* The account these calendars belong to, said once, beside the heading. */
+.settings-account {
+  color: var(--muted);
+  opacity: var(--dim-2);
+}
+
 .settings-reset {
   font-size: var(--t-small);
   padding: 0;

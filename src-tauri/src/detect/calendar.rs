@@ -86,19 +86,24 @@ pub fn visible<'a>(
 pub fn sources_for_display(
     eventkit: &[CalendarSource],
     hidden: &std::collections::HashSet<String>,
-    google: Option<(&str, bool)>,
+    google: &[crate::gcal::calendars::GoogleCalendar],
 ) -> Vec<CalendarSource> {
     let mut list = with_visibility(eventkit, hidden);
-    if let Some((id, enabled)) = google {
-        list.push(CalendarSource {
-            id: id.to_string(),
-            title: "Google Calendar".into(),
-            // Google's own blue, so the row reads like the others rather than
-            // like a footnote.
-            color: Some("#4285f4".into()),
-            visible: enabled,
-        });
-    }
+    list.extend(google.iter().map(|calendar| {
+        CalendarSource {
+            id: crate::gcal::calendars::source_id(&calendar.id),
+            title: calendar.title.clone(),
+            // The account's own colour for it. Falls back to Google blue, so a
+            // calendar with no colour still reads as a row rather than a gap.
+            color: Some(
+                calendar
+                    .color
+                    .clone()
+                    .unwrap_or_else(|| "#4285f4".to_string()),
+            ),
+            visible: !hidden.contains(&crate::gcal::calendars::source_id(&calendar.id)),
+        }
+    }));
     list
 }
 
@@ -244,17 +249,45 @@ mod tests {
         ids.iter().map(|s| (*s).to_string()).collect()
     }
 
+    fn google(id: &str, title: &str) -> crate::gcal::calendars::GoogleCalendar {
+        crate::gcal::calendars::GoogleCalendar {
+            id: id.into(),
+            title: title.into(),
+            color: Some("#f83a22".into()),
+            primary: false,
+        }
+    }
+
     #[test]
-    fn a_connected_google_account_is_in_the_list() {
-        // It is the one source the user explicitly set up. Leaving it out of a
-        // list headed "visible calendars" is how it becomes unfindable.
-        let list = sources_for_display(&[], &hidden(&[]), Some(("google:primary", false)));
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].id, "google:primary");
-        assert!(
-            !list[0].visible,
-            "should reflect the stored switch, not default on"
+    fn every_calendar_in_the_account_gets_its_own_row() {
+        // Not one row saying "Google". The account has several calendars and
+        // the user wants to choose between them.
+        let list = sources_for_display(
+            &[],
+            &hidden(&[]),
+            &[
+                google("me@example.com", "Personal"),
+                google("w@g.com", "Work"),
+            ],
         );
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].title, "Personal");
+        assert_eq!(list[1].title, "Work");
+    }
+
+    #[test]
+    fn a_google_calendar_switched_off_stays_off() {
+        // The same hidden set as the local calendars, so one rule covers both.
+        let list = sources_for_display(
+            &[],
+            &hidden(&["google:w@g.com"]),
+            &[
+                google("me@example.com", "Personal"),
+                google("w@g.com", "Work"),
+            ],
+        );
+        assert!(list[0].visible);
+        assert!(!list[1].visible, "the hidden Google calendar should be off");
     }
 
     #[test]
@@ -262,19 +295,17 @@ mod tests {
         let list = sources_for_display(
             &[source("work"), source("personal")],
             &hidden(&["personal"]),
-            Some(("google:primary", true)),
+            &[google("me@example.com", "Personal")],
         );
         assert_eq!(list.len(), 3);
         assert!(list[0].visible, "work was not hidden");
         assert!(!list[1].visible, "personal was hidden");
-        assert!(list[2].visible, "google was enabled");
+        assert!(list[2].visible, "google was not hidden");
     }
 
     #[test]
-    fn no_account_means_no_row() {
-        // A row for an account nobody connected offers a switch that controls
-        // nothing.
-        assert!(sources_for_display(&[], &hidden(&[]), None).is_empty());
+    fn no_account_means_no_google_rows() {
+        assert!(sources_for_display(&[], &hidden(&[]), &[]).is_empty());
     }
 
     #[test]

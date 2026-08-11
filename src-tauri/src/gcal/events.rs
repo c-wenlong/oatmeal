@@ -10,7 +10,19 @@ use serde::Deserialize;
 use super::token::TokenError;
 use crate::detect::CalendarEvent;
 
-const EVENTS_ENDPOINT: &str = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+/// The events endpoint for one calendar.
+///
+/// Per calendar rather than a hardcoded `primary`: an account's meetings are
+/// spread across the calendars it subscribes to, and reading only the primary
+/// one silently misses every meeting on a shared or team calendar.
+///
+/// The id is percent-encoded — calendar ids are email-shaped and contain `@`.
+pub fn events_endpoint(calendar_id: &str) -> String {
+    format!(
+        "https://www.googleapis.com/calendar/v3/calendars/{}/events",
+        super::pkce::encode(calendar_id)
+    )
+}
 
 #[derive(Debug, Deserialize)]
 struct EventsResponse {
@@ -154,11 +166,12 @@ fn to_calendar_event(event: GoogleEvent) -> Option<CalendarEvent> {
 pub async fn upcoming(
     http: &reqwest::Client,
     access_token: &str,
+    calendar_id: &str,
     now_ms: i64,
     horizon_ms: i64,
 ) -> Result<Vec<CalendarEvent>, TokenError> {
     let response = http
-        .get(EVENTS_ENDPOINT)
+        .get(events_endpoint(calendar_id))
         .bearer_auth(access_token)
         .query(&[
             ("timeMin", iso8601(now_ms)),
@@ -226,6 +239,21 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_calendar_has_its_own_endpoint() {
+        // Reading only `primary`, which this used to do, misses every meeting
+        // on a shared or team calendar.
+        assert!(events_endpoint("primary").ends_with("/calendars/primary/events"));
+    }
+
+    #[test]
+    fn a_calendar_id_is_encoded_into_the_path() {
+        // Ids are email-shaped. An unencoded `@` makes a URL that 404s.
+        let url = events_endpoint("team@group.calendar.google.com");
+        assert!(url.contains("team%40group.calendar.google.com"), "{url}");
+        assert!(!url.contains("@"), "{url}");
+    }
 
     fn event(json: serde_json::Value) -> Option<CalendarEvent> {
         to_calendar_event(serde_json::from_value(json).unwrap())

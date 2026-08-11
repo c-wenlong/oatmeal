@@ -159,9 +159,15 @@ function forScenario(scenario: Scenario, now: number): Store {
       store.calendars = [
         ...store.calendars,
         {
-          id: "google:primary",
-          title: "Google Calendar",
-          color: "#4285f4",
+          id: "google:chenwenlongofficial@gmail.com",
+          title: "chenwenlongofficial@gmail.com",
+          color: "#9fe1e7",
+          visible: true,
+        },
+        {
+          id: "google:work@group.calendar.google.com",
+          title: "Work",
+          color: "#f83a22",
           visible: false,
         },
       ];
@@ -239,6 +245,8 @@ function handlers(): Record<string, (a?: Record<string, unknown>) => unknown> {
       else throw new Error(`unknown display setting '${key}'`);
     },
 
+    calendar_refresh_google: () =>
+      s.gcal.connected ? "chenwenlongofficial@gmail.com" : null,
     calendar_access: () => ({ authorized: true, checkedAtMs: 1_770_000_000_000 }),
     sidecar_log_tail: () => [
       "1770000000000 [supervisor] spawned pid=4242 attempt=1",

@@ -525,6 +525,17 @@ export function calendarSources(): Promise<CalendarSource[]> {
   return invoke<CalendarSource[]>("calendar_sources");
 }
 
+/**
+ * Fetches the account's calendars and returns its email address.
+ *
+ * Null when no account is connected. Behind the render rather than in front of
+ * it: the list comes from cache first, so a slow or failed network leaves the
+ * last known calendars on screen.
+ */
+export function calendarRefreshGoogle(): Promise<string | null> {
+  return invoke<string | null>("calendar_refresh_google");
+}
+
 export function calendarSetVisible(
   calendarId: string,
   visible: boolean,

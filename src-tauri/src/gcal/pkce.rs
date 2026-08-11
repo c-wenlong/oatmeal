@@ -15,13 +15,25 @@
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
-/// The scope this asks for.
+/// The scopes this asks for.
 ///
-/// Read-only, and only events. `calendar.readonly` would also expose calendar
-/// settings and ACLs, which detection has no use for — and a consent screen
-/// asking for more than the feature needs is how a user learns not to trust the
-/// app.
-pub const SCOPE: &str = "https://www.googleapis.com/auth/calendar.events.readonly";
+/// Two scopes, space separated, both read-only and both minimal for what they
+/// buy:
+///
+/// - `calendar.events.readonly` — the events detection is built on.
+/// - `calendar.calendarlist.readonly` — the *names and colours* of the
+///   calendars, so the user can choose which to watch, and the address of the
+///   connected account. `calendar.readonly` would cover both and would also
+///   hand over every event body in every calendar, which is far more than a
+///   list of names is worth.
+///
+/// Widening this invalidates an existing grant: a refresh token carries the
+/// scopes it was issued for, so anyone connected before this must reconnect.
+pub const SCOPE: &str = concat!(
+    "https://www.googleapis.com/auth/calendar.events.readonly",
+    " ",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly"
+);
 
 pub const AUTH_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
@@ -246,14 +258,24 @@ mod tests {
 
     #[test]
     fn the_scope_is_the_narrowest_one_that_works() {
-        // Detection reads events. Asking for `calendar.readonly` would also
-        // expose settings and ACLs, and a consent screen that asks for more
-        // than the feature needs teaches people not to trust the app.
+        // Two, and both minimal for what they buy: the events detection runs
+        // on, and the *names* of the calendars so the user can choose between
+        // them. `calendar.readonly` covers both and additionally hands over
+        // every event body in every calendar — a consent screen that asks for
+        // more than the feature needs teaches people not to trust the app.
         assert_eq!(
             SCOPE,
-            "https://www.googleapis.com/auth/calendar.events.readonly"
+            "https://www.googleapis.com/auth/calendar.events.readonly \
+             https://www.googleapis.com/auth/calendar.calendarlist.readonly"
+                .replace("             ", "")
         );
-        assert!(SCOPE.ends_with("readonly"), "the scope must be read-only");
+        for scope in SCOPE.split(' ') {
+            assert!(scope.ends_with("readonly"), "{scope} is not read-only");
+            assert!(
+                scope != "https://www.googleapis.com/auth/calendar.readonly",
+                "that grants every event body in the account"
+            );
+        }
     }
 
     #[test]

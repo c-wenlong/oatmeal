@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  calendarRefreshGoogle,
   calendarResetVisibility,
   calendarSetDisplay,
   calendarSetVisible,
@@ -100,6 +101,7 @@ export function CalendarPane() {
   const [settings, setSettings] = useState<DetectionSettings | null>(null);
   const [sources, setSources] = useState<CalendarSource[] | null>(null);
   const [access, setAccess] = useState<CalendarAccess | null>(null);
+  const [account, setAccount] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -114,6 +116,17 @@ export function CalendarPane() {
       setAccess(granted);
     } catch (err) {
       setError(String(err));
+    }
+
+    /* The account's calendars, fetched after the screen is already showing.
+       A failure here leaves the cached list rather than emptying it — the
+       calendars did not stop existing because the network did. */
+    try {
+      const email = await calendarRefreshGoogle();
+      setAccount(email);
+      if (email) setSources(await calendarSources());
+    } catch {
+      /* keeps whatever was cached */
     }
   }, []);
 
@@ -179,7 +192,12 @@ export function CalendarPane() {
 
       <section className="settings-block">
         <div className="settings-section-head">
-          <h2 className="settings-section">Visible calendars</h2>
+          <h2 className="settings-section">
+            Visible calendars
+            {/* Which account these belong to. Read from the primary calendar's
+                id, which is the address — no identity scope needed for it. */}
+            {account && <span className="settings-account"> · {account}</span>}
+          </h2>
           {/* Only offered when it would do something. A Reset that is always
               there is a button the user has to think about every time. */}
           {anyHidden && (

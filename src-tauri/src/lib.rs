@@ -111,6 +111,10 @@ pub struct AppState {
     /// The app was already being told this and throwing it away, which is why
     /// an empty list could only be explained by guessing.
     pub calendar_access: Mutex<Option<CalendarAccess>>,
+    /// The calendars in the connected Google account, and its address. Cached
+    /// because the settings screen reads them on every visit and the account
+    /// changes about as often as the user connects one.
+    pub google_calendars: Mutex<Vec<gcal::calendars::GoogleCalendar>>,
     /// An app awaiting its one-time "always or never" answer.
     ///
     /// Held rather than only emitted, for the same reason permissions are
@@ -662,12 +666,40 @@ async fn gcal_upcoming(app: &tauri::AppHandle) -> Result<Vec<detect::CalendarEve
     let client_id = client_id.ok_or("not connected: no client id")?;
 
     let state = app.state::<AppState>();
+
+    // Only the calendars the user left switched on. Reading a calendar they
+    // hid would put its meetings in the popup anyway, which makes the switch
+    // a lie; reading only `primary` — what this used to do — misses every
+    // meeting on a shared or team calendar.
+    let wanted: Vec<String> = {
+        let hidden = {
+            let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+            hidden_calendars(db.connection())
+        };
+        state
+            .google_calendars
+            .lock()
+            .map_err(|_| "google calendars lock poisoned")?
+            .iter()
+            .filter(|c| !hidden.contains(&gcal::calendars::source_id(&c.id)))
+            .map(|c| c.id.clone())
+            .collect()
+    };
+    // Nothing cached yet — the account has not been read since launch. The
+    // primary calendar is the honest fallback, not "no meetings at all".
+    let wanted = if wanted.is_empty() {
+        vec!["primary".to_string()]
+    } else {
+        wanted
+    };
+
     state
         .gcal
         .upcoming(
             &http,
             state.keys.as_ref(),
             &client_id,
+            &wanted,
             now_ms(),
             24 * 60 * 60 * 1000,
         )
@@ -1213,21 +1245,54 @@ fn calendar_sources(
         .lock()
         .map_err(|_| "calendars lock poisoned")?;
 
-    // The connected account, if there is one, alongside the local calendars.
-    let google = if state.gcal.is_connected(state.keys.as_ref()) {
-        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
-        let enabled = repo::get_setting(db.connection(), SETTING_GCAL_ENABLED)
-            .ok()
-            .flatten()
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        Some((gcal::SOURCE_ID, enabled))
-    } else {
-        None
-    };
+    // Every calendar in the connected account, as its own row. Read from the
+    // cache so the screen renders at once; `calendar_refresh_google` is what
+    // fills it, behind the render.
+    let google = state
+        .google_calendars
+        .lock()
+        .map_err(|_| "google calendars lock poisoned")?
+        .clone();
     Ok(detect::calendar::sources_for_display(
-        &known, &hidden, google,
+        &known, &hidden, &google,
     ))
+}
+
+/// Fetches the account's calendars and caches them, returning its address.
+///
+/// Separate from `calendar_sources` so the settings screen renders from cache
+/// at once and the network happens behind it — and so a failure to reach
+/// Google leaves the last known list on screen rather than emptying it.
+#[tauri::command]
+async fn calendar_refresh_google(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let (client_id, http) = {
+        let state = app.state::<AppState>();
+        if !state.gcal.is_connected(state.keys.as_ref()) {
+            return Ok(None);
+        }
+        let db = state.db.lock().map_err(|_| "db lock poisoned")?;
+        let Some(client_id) = gcal_client_id(db.connection()) else {
+            return Ok(None);
+        };
+        (client_id, state.http.clone())
+    };
+
+    let calendars = {
+        let state = app.state::<AppState>();
+        state
+            .gcal
+            .calendars(&http, state.keys.as_ref(), &client_id, now_ms())
+            .await
+            .map_err(|e| e.to_string())?
+    };
+
+    let email = gcal::calendars::account_email(&calendars);
+    let state = app.state::<AppState>();
+    *state
+        .google_calendars
+        .lock()
+        .map_err(|_| "google calendars lock poisoned")? = calendars;
+    Ok(email)
 }
 
 /// Switches one calendar on or off.
@@ -1238,17 +1303,6 @@ fn calendar_set_visible(
     visible: bool,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|_| "db lock poisoned")?;
-
-    // The Google row is not an EventKit calendar, so hiding it is not a matter
-    // of the hidden set — it is the same switch the account card owns.
-    if calendar_id == gcal::SOURCE_ID {
-        return repo::set_setting(
-            db.connection(),
-            SETTING_GCAL_ENABLED,
-            if visible { "1" } else { "0" },
-        )
-        .map_err(|e| e.to_string());
-    }
 
     let mut hidden = hidden_calendars(db.connection());
     if visible {
@@ -2883,6 +2937,7 @@ pub fn run() {
                 upcoming: Mutex::new(Vec::new()),
                 calendars: Mutex::new(Vec::new()),
                 calendar_access: Mutex::new(None),
+                google_calendars: Mutex::new(Vec::new()),
                 pending_question: Mutex::new(None),
                 last_permissions: Mutex::new(None),
                 link_params: Mutex::new(link::LinkParams::default()),
@@ -3081,6 +3136,7 @@ pub fn run() {
             notion_export,
             calendar_access,
             calendar_sources,
+            calendar_refresh_google,
             sidecar_log_tail,
             sidecar_log_path,
             calendar_set_visible,
