@@ -52,16 +52,24 @@ export function connectOutcomeFrom(search: string): FlowOutcome {
 }
 
 /** Which scenario the fixtures start in. Set with `?preview=<name>`. */
-export type Scenario = "default" | "fresh" | "google-connected" | "no-calendars";
+export type Scenario =
+  "default" | "fresh" | "google-connected" | "no-calendars" | "no-permissions";
 
 export function scenarioFrom(search: string): Scenario {
   const asked = new URLSearchParams(search).get("preview");
-  const known: Scenario[] = ["default", "fresh", "google-connected", "no-calendars"];
+  const known: Scenario[] = [
+    "default",
+    "fresh",
+    "google-connected",
+    "no-calendars",
+    "no-permissions",
+  ];
   return known.find((name) => name === asked) ?? "default";
 }
 
 interface Store {
   detection: DetectionSettings;
+  permissions: { microphone: string; screenRecording: string; needsRelaunch: boolean };
   provider: ProviderConfig;
   gcal: GcalSettings;
   calendars: CalendarSource[];
@@ -74,6 +82,11 @@ const DAY = 86_400_000;
 
 function baseStore(now: number): Store {
   return {
+    permissions: {
+      microphone: "granted",
+      screenRecording: "granted",
+      needsRelaunch: false,
+    },
     provider: {
       id: "ollama",
       kind: "ollama",
@@ -152,6 +165,15 @@ function forScenario(scenario: Scenario, now: number): Store {
           visible: false,
         },
       ];
+      return store;
+    case "no-permissions":
+      // What a first launch looks like before macOS has been asked, with one
+      // already refused — the state the Capture screen exists for.
+      store.permissions = {
+        microphone: "undetermined",
+        screenRecording: "denied",
+        needsRelaunch: false,
+      };
       return store;
     case "no-calendars":
       // Detection on, EventKit silent — the state that looks like a bug.
@@ -251,11 +273,7 @@ function handlers(): Record<string, (a?: Record<string, unknown>) => unknown> {
     meeting_state: () => ({ state: "idle" }),
     meeting_active: () => null,
 
-    permissions_snapshot: () => ({
-      microphone: "granted",
-      screenRecording: "granted",
-      needsRelaunch: false,
-    }),
+    permissions_snapshot: () => s.permissions,
     providers_list: () => [
       {
         kind: "bundled",

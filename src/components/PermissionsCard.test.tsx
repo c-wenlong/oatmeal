@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PermissionsCard } from "./PermissionsCard";
+import { PermissionsCard, headlineTone } from "./PermissionsCard";
 import {
   onSidecarEvent,
   openPrivacySettings,
@@ -55,6 +55,16 @@ beforeEach(() => {
   mockOpen.mockResolvedValue(undefined);
 });
 
+/** The card's own indicator tone — its state, without a badge to read. */
+async function cardTone(): Promise<string> {
+  const dot = await waitFor(() => {
+    const found = document.querySelector(".card-head .perm-dot");
+    if (!found) throw new Error("no indicator");
+    return found;
+  });
+  return dot.className.replace(/.*perm-dot--/, "");
+}
+
 describe("PermissionsCard", () => {
   it("seeds from the cached snapshot when it mounts after the sidecar reported", async () => {
     // Regression: permissions arrive as a single event. A card that only
@@ -68,7 +78,7 @@ describe("PermissionsCard", () => {
 
     render(<PermissionsCard />);
 
-    expect(await screen.findByText("ready")).toBeInTheDocument();
+    expect(await cardTone()).toBe("ok");
   });
 
   it("prefers a live event over the seeded cache", async () => {
@@ -78,24 +88,23 @@ describe("PermissionsCard", () => {
       needsRelaunch: false,
     });
     render(<PermissionsCard />);
-    expect(await screen.findByText("ready")).toBeInTheDocument();
+    expect(await cardTone()).toBe("ok");
 
     // Permission revoked while running: the fresher event must win.
     await waitFor(() => expect(mockOn).toHaveBeenCalled());
     emitPermissions("denied", "granted");
-    expect(await screen.findByText("capture blocked")).toBeInTheDocument();
+    expect(await cardTone()).toBe("err");
   });
 
   it("stays usable when nothing is cached yet", async () => {
     mockSnapshot.mockResolvedValue(null);
     render(<PermissionsCard />);
-    expect(await screen.findByText("unknown")).toBeInTheDocument();
+    expect(await cardTone()).toBe("pending");
   });
 
   it("starts unknown and does not claim readiness before checking", async () => {
     render(<PermissionsCard />);
-    expect(screen.getByText("unknown")).toBeInTheDocument();
-    expect(screen.queryByText("ready")).not.toBeInTheDocument();
+    expect(await cardTone()).toBe("pending");
   });
 
   it("queries without prompting when Check is pressed", async () => {
@@ -110,7 +119,7 @@ describe("PermissionsCard", () => {
     await waitFor(() => expect(mockOn).toHaveBeenCalled());
     emitPermissions("granted", "granted");
 
-    expect(await screen.findByText("ready")).toBeInTheDocument();
+    expect(await cardTone()).toBe("ok");
     expect(screen.getByText(/Ready to record/i)).toBeInTheDocument();
   });
 
@@ -119,7 +128,7 @@ describe("PermissionsCard", () => {
     await waitFor(() => expect(mockOn).toHaveBeenCalled());
     emitPermissions("denied", "granted");
 
-    expect(await screen.findByText("capture blocked")).toBeInTheDocument();
+    expect(await cardTone()).toBe("err");
 
     await userEvent.click(screen.getAllByRole("button", { name: /open settings/i })[0]);
     expect(mockOpen).toHaveBeenCalledWith("microphone");
@@ -142,7 +151,7 @@ describe("PermissionsCard", () => {
     // Both granted, but the running process still holds the old denial.
     emitPermissions("granted", "granted", true);
 
-    expect(await screen.findByText("capture blocked")).toBeInTheDocument();
+    expect(await cardTone()).toBe("err");
     expect(screen.getByText(/relaunch/i)).toBeInTheDocument();
   });
 
@@ -177,5 +186,40 @@ describe("PermissionsCard", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /check permissions/i }));
     expect(await screen.findByText(/sidecar is not running/)).toBeInTheDocument();
+  });
+});
+
+describe("headlineTone", () => {
+  it("keeps not-yet-known apart from blocked", () => {
+    // One is the sidecar not having reported; the other is a problem the user
+    // has to go and fix. Showing them the same colour asks them to act on a
+    // question that has not been answered yet.
+    expect(headlineTone(null, false)).toBe("pending");
+    expect(
+      headlineTone(
+        { microphone: "granted", screenRecording: "denied", needsRelaunch: false },
+        false,
+      ),
+    ).toBe("err");
+    expect(
+      headlineTone(
+        { microphone: "granted", screenRecording: "granted", needsRelaunch: false },
+        true,
+      ),
+    ).toBe("ok");
+  });
+});
+
+describe("the state is not colour alone", () => {
+  it("labels each permission's indicator", async () => {
+    // A dot that only differs by hue is unreadable to a colour-blind user and
+    // invisible to a screen reader.
+    render(<PermissionsCard />);
+    act(() => emitPermissions("granted", "denied", false));
+
+    expect(await screen.findByLabelText(/Microphone: granted/i)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Screen & System Audio Recording: denied/i),
+    ).toBeInTheDocument();
   });
 });

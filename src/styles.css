@@ -9,6 +9,11 @@
   --ok: #2f7a4f;
   --warn: #a8791b;
   --err: #b03a30;
+  /* The colour a control is when it is on, after Granola's olive-green
+     switches. Deliberately not `--accent`: the accent is the record button and
+     the app's identity, and painting every switch with it makes a settings page
+     look like a page of record buttons. */
+  --on: #7f9420;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   /* Display face. Granola sets its titles in a serif and the rest in sans; the
      contrast is what makes a meeting read as a document rather than a record. */
@@ -60,6 +65,7 @@
     --ok: #5fbf87;
     --warn: #d9ac52;
     --err: #e0736a;
+    --on: #a3b83c;
   }
 }
 
@@ -152,6 +158,11 @@ body {
   line-height: 1.5;
 }
 
+/* DEV ONLY — remove with the workbench.
+   These survive on the diagnostic cards, where a loud state badge is the point:
+   the workbench exists to be read at a glance while something is being proved.
+   Every user-facing surface now carries state as a switch or a dot instead, so
+   when the workbench goes, `.pill` and its three tones go with it. */
 .pill {
   font-size: 11px;
   font-weight: 600;
@@ -317,6 +328,32 @@ button.primary:hover:not(:disabled) {
   margin: 12px 0 0;
 }
 
+/* A state you cannot change from here is a dot, not a switch.
+   macOS owns these: the app can prompt once, and after that only System
+   Settings can move them. A switch would be a control that mostly refuses to
+   work, which is worse than no control. Per the Granola pass, the state is
+   carried by colour on the right where a switch would be, so the rows still
+   scan as one column. */
+.perm-dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  flex: none;
+  background: var(--muted);
+}
+
+.perm-dot--ok {
+  background: var(--on);
+}
+
+.perm-dot--pending {
+  background: var(--warn);
+}
+
+.perm-dot--err {
+  background: var(--err);
+}
+
 .perm {
   border-top: 1px solid var(--border);
   padding: 14px 0 4px;
@@ -332,6 +369,11 @@ button.primary:hover:not(:disabled) {
   align-items: center;
   gap: 10px;
   margin-bottom: 4px;
+}
+
+/* The dot sits hard right, where the switch sits on every other row. */
+.perm-head .perm-dot {
+  margin-left: auto;
 }
 
 .perm-title {
@@ -2196,12 +2238,14 @@ input:focus {
 }
 
 .settings input[type="checkbox"]:checked {
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-  border-color: var(--accent);
+  background: var(--on);
+  border-color: var(--on);
 }
 
+/* White thumb on a filled track, like every macOS switch — the previous
+   tinted-track-and-coloured-thumb read as a slider at a glance. */
 .settings input[type="checkbox"]:checked::after {
-  background: var(--accent);
+  background: #fff;
   transform: translate(0.85rem, -50%);
 }
 

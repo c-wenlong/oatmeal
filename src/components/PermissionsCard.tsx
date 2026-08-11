@@ -16,6 +16,21 @@ import {
 import type { PrivacyPane } from "../types";
 
 /**
+ * The tone of the card's own indicator.
+ *
+ * Three states, because "the sidecar has not reported yet" is not the same as
+ * "capture is blocked" — one is unknown and the other is a problem the user
+ * has to fix.
+ */
+export function headlineTone(
+  snapshot: PermissionsSnapshot | null,
+  ready: boolean,
+): "ok" | "pending" | "err" {
+  if (snapshot === null) return "pending";
+  return ready ? "ok" : "err";
+}
+
+/**
  * Pre-flight for capture. Recording without both permissions produces a silent
  * or half-empty transcript, so this has to be checked before G6 ever starts a
  * stream — not discovered afterwards from an empty file.
@@ -83,11 +98,13 @@ export function PermissionsCard() {
     <section className="card">
       <div className="card-head">
         <h2>Permissions</h2>
-        {snapshot === null && <span className="pill pill--pending">unknown</span>}
-        {snapshot !== null && ready && <span className="pill pill--ok">ready</span>}
-        {snapshot !== null && !ready && (
-          <span className="pill pill--err">capture blocked</span>
-        )}
+        {/* No badge. The sentence below already says whether capture can
+            happen, and READY next to "Ready to record." is the same fact
+            twice in two typefaces. */}
+        <span
+          className={`perm-dot perm-dot--${headlineTone(snapshot, ready)}`}
+          aria-hidden="true"
+        />
       </div>
       <p className="card-note">
         {snapshot === null
@@ -118,7 +135,15 @@ export function PermissionsCard() {
             <div className="perm" key={cap.pane}>
               <div className="perm-head">
                 <span className="perm-title">{cap.title}</span>
-                <span className={`pill pill--${cap.tone}`}>{cap.state}</span>
+                {/* The state, said once, where a switch would be. `title` so
+                    the word is still reachable, and an accessible label so it
+                    is not colour alone. */}
+                <span
+                  className={`perm-dot perm-dot--${cap.tone}`}
+                  role="img"
+                  aria-label={`${cap.title}: ${cap.state}`}
+                  title={cap.state}
+                />
               </div>
               <p className="perm-reason">{cap.reason}</p>
               {cap.remedy && (
