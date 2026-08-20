@@ -24,6 +24,11 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    # Without this the job inherits GitHub's 360-minute default, which is what
+    # a wedged job costs before anyone notices. A release job already sat for
+    # four hours on a codesign prompt nobody could answer. Slowest run here is
+    # 1.3 minutes, so 10 is generous.
+    timeout-minutes: 10
     env:
       # `secrets` is not available in a step-level `if`; job env is.
       HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
@@ -76,6 +81,9 @@ jobs:
   swift:
     name: Swift sidecar
     runs-on: macos-latest
+    # Slowest observed run is 2.6 minutes; the rest is headroom for a cold
+    # SwiftPM cache. macOS minutes count 10x, so a hang here is the expensive one.
+    timeout-minutes: 10
     env:
       HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
     steps:
@@ -118,6 +126,9 @@ jobs:
   rust:
     name: Rust core
     runs-on: macos-latest
+    # Typically 3.6 minutes, 11.1 at its worst. The gap to 25 is for a cold
+    # rust-cache miss, which recompiles every dependency from scratch.
+    timeout-minutes: 25
     env:
       HAS_CODECOV: ${{ secrets.CODECOV_TOKEN != '' }}
     steps:
